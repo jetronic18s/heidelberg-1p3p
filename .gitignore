@@ -1,2 +1,11 @@
-.pio
-.vscode
+# PlatformIO
+.pio/
+
+# ESP-IDF
+idf/build/
+
+# ESP-IDF fetched components
+idf/components/
+
+# Other
+.DS_Store

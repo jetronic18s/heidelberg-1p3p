@@ -144,7 +144,8 @@ void setupPages(AsyncWebServer *server, PhaseSwitch *phaseSwitch, Config *config
           "<label for=\"sd\">Phase switch delay (ms)</label>"
         "</td>"
         "<td>");
-    response->printf("<input type=\"number\" min=\"1\" id=\"sd\" name=\"sd\" value=\"%d\">", config->getSwitchDelay());
+    response->printf("<input type=\"number\" min=\"1\" id=\"sd\" name=\"sd\" value=\"%lu\">",
+                     (unsigned long)config->getSwitchDelay());
     response->print("</td>"
         "</tr>");
     response->print("<tr>"
@@ -609,8 +610,8 @@ void sendTableRow(AsyncResponseStream *response, const char *name, uint32_t valu
     response->printf(
       "<tr>"
         "<td>%s:</td>"
-        "<td>%d</td>"
-      "</tr>", name, value);
+        "<td>%lu</td>"
+      "</tr>", name, (unsigned long)value);
 }
 
 void sendDebugForm(AsyncResponseStream *response, String slaveId, String reg, String function, String count){

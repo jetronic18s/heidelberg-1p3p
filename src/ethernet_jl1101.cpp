@@ -211,22 +211,23 @@ bool setupEthernet()
     }
 
     eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
+    eth_esp32_emac_config_t emac_config = ETH_ESP32_EMAC_DEFAULT_CONFIG();
     eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
     // JL1101 on Dingtian boards often sits at PHY addr 0
     phy_config.phy_addr = 0;
     phy_config.reset_gpio_num = PIN_ETH_PWR;
 
-    mac_config.smi_mdc_gpio_num = PIN_ETH_MDC;
-    mac_config.smi_mdio_gpio_num = PIN_ETH_MDIO;
-    mac_config.clock_config.rmii.clock_mode = EMAC_CLK_OUT;
-    mac_config.clock_config.rmii.clock_gpio = EMAC_CLK_OUT_180_GPIO;
+    emac_config.smi_mdc_gpio_num = PIN_ETH_MDC;
+    emac_config.smi_mdio_gpio_num = PIN_ETH_MDIO;
+    emac_config.clock_config.rmii.clock_mode = EMAC_CLK_OUT;
+    emac_config.clock_config.rmii.clock_gpio = EMAC_CLK_OUT_180_GPIO;
 
     // Ensure PHY power/reset line is asserted before init
     pinMode(PIN_ETH_PWR, OUTPUT);
     digitalWrite(PIN_ETH_PWR, HIGH);
     delay(200);
 
-    esp_eth_mac_t *mac = esp_eth_mac_new_esp32(&mac_config);
+    esp_eth_mac_t *mac = esp_eth_mac_new_esp32(&emac_config, &mac_config);
     esp_eth_phy_t *phy = esp_eth_phy_new_jl1101(&phy_config);
     if (mac == NULL || phy == NULL) {
         dbgln("[eth] mac/phy create failed");
