@@ -56,6 +56,15 @@ Wenn kein WLAN eingerichtet ist und LAN wegfällt, startet der ESP nach einem Re
 
 Unter **Config** kann Modbus komplett deaktiviert werden. In diesem Fall wird im Status keine Register‑Aktualisierung angeboten.
 
+## ESP-IDF Quick Start
+
+1. `cd idf`
+2. `. ~/esp-idf/export.sh`
+3. `./scripts/fetch_components.sh`
+4. `idf.py set-target esp32`
+5. `idf.py build`
+6. `./flash.sh /dev/ttyUSB0`
+
 ## Darf ich das?
 
 **Nope!**
