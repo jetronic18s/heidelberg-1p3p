@@ -9,3 +9,4 @@ idf/components/
 
 # Other
 .DS_Store
+.vscode/

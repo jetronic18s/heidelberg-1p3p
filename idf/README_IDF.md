@@ -16,6 +16,9 @@ Fetch the required components into `idf/components/`:
 ./scripts/fetch_components.sh
 ```
 
+`components.lock` pins both the commit and the tree hash to ensure reproducible checkouts.
+Use `./scripts/fetch_components.sh --no-verify` to skip tree hash verification.
+
 The following libraries are expected as ESP-IDF components in `idf/components/`:
 
 - `arduino` (arduino-esp32 core, as an ESP-IDF component; pinned to 3.0.7)
