@@ -6,16 +6,19 @@
 #include "esp_check.h"
 #include "esp_eth.h"
 #include "esp_eth_com.h"
+#include "esp_eth_phy_802_3.h"
 #include "esp_log.h"
+#if __has_include("eth_phy_802_3_regs.h")
+#include "eth_phy_802_3_regs.h"
+#else
 #include "eth_phy_regs_struct.h"
+#endif
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "esp_rom_gpio.h"
 #include "esp_rom_sys.h"
 #include "esp_idf_version.h"
-
-#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 4, 2)
 
 static const char *TAG = "jl1101";
 
@@ -134,6 +137,13 @@ err:
     return ret;
 }
 
+static esp_err_t jl1101_set_link(esp_eth_phy_t *phy, eth_link_t link)
+{
+    phy_jl1101_t *jl1101 = __containerof(phy, phy_jl1101_t, parent);
+    jl1101->link_status = link;
+    return ESP_OK;
+}
+
 static esp_err_t jl1101_reset(esp_eth_phy_t *phy)
 {
     esp_err_t ret = ESP_OK;
@@ -202,6 +212,29 @@ static esp_err_t jl1101_negotiate(esp_eth_phy_t *phy)
     return ESP_OK;
 err:
     return ret;
+}
+
+static esp_err_t jl1101_autonego_ctrl(esp_eth_phy_t *phy, eth_phy_autoneg_cmd_t cmd, bool *autonego_en_stat)
+{
+    PHY_CHECK(autonego_en_stat, "autonego_en_stat can't be null", err);
+
+    switch (cmd) {
+        case ESP_ETH_PHY_AUTONEGO_RESTART:
+        case ESP_ETH_PHY_AUTONEGO_EN:
+            *autonego_en_stat = true;
+            return jl1101_negotiate(phy);
+        case ESP_ETH_PHY_AUTONEGO_DIS:
+            *autonego_en_stat = false;
+            return ESP_OK;
+        case ESP_ETH_PHY_AUTONEGO_G_STAT:
+            *autonego_en_stat = true;
+            return ESP_OK;
+        default:
+            break;
+    }
+
+err:
+    return ESP_ERR_INVALID_ARG;
 }
 
 static esp_err_t jl1101_pwrctl(esp_eth_phy_t *phy, bool enable)
@@ -301,7 +334,9 @@ static esp_err_t jl1101_init(esp_eth_phy_t *phy)
     phyidr1_reg_t id1;
     phyidr2_reg_t id2;
     if (jl1101->addr == ESP_ETH_PHY_ADDR_AUTO) {
-        PHY_CHECK(esp_eth_detect_phy_addr(eth, &jl1101->addr) == ESP_OK, "Detect PHY address failed", err);
+        int detected_addr = jl1101->addr;
+        PHY_CHECK(esp_eth_phy_802_3_detect_phy_addr(eth, &detected_addr) == ESP_OK, "Detect PHY address failed", err);
+        jl1101->addr = detected_addr;
     }
     /* Power on Ethernet PHY */
     PHY_CHECK(jl1101_pwrctl(phy, true) == ESP_OK, "power control failed", err);
@@ -348,8 +383,9 @@ esp_eth_phy_t *esp_eth_phy_new_jl1101(const eth_phy_config_t *config)
     jl1101->parent.init = jl1101_init;
     jl1101->parent.deinit = jl1101_deinit;
     jl1101->parent.set_mediator = jl1101_set_mediator;
-    jl1101->parent.negotiate = jl1101_negotiate;
+    jl1101->parent.autonego_ctrl = jl1101_autonego_ctrl;
     jl1101->parent.get_link = jl1101_get_link;
+    jl1101->parent.set_link = jl1101_set_link;
     jl1101->parent.pwrctl = jl1101_pwrctl;
     jl1101->parent.get_addr = jl1101_get_addr;
     jl1101->parent.set_addr = jl1101_set_addr;
@@ -359,5 +395,3 @@ esp_eth_phy_t *esp_eth_phy_new_jl1101(const eth_phy_config_t *config)
 err:
     return NULL;
 }
-
-#endif // ESP_IDF_VERSION < 5.4.2
