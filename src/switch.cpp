@@ -19,8 +19,9 @@ void PhaseSwitch::begin(){
   digitalWrite(PIN_1P_OUT, RELAY_OFF);
   pinMode(PIN_3P_OUT, OUTPUT);
   digitalWrite(PIN_3P_OUT, RELAY_OFF);
-  pinMode(PIN_1P_IN, INPUT_PULLUP);
-  pinMode(PIN_3P_IN, INPUT_PULLUP);
+  // GPIO36/39 are input-only on ESP32 and have no internal pullups.
+  pinMode(PIN_1P_IN, INPUT);
+  pinMode(PIN_3P_IN, INPUT);
 }
 
 void PhaseSwitch::beginModbus(){

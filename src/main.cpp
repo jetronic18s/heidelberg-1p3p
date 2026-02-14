@@ -10,6 +10,7 @@ PhaseSwitch phaseSwitch;
 TelnetPrint debugOut;
 #endif
 WiFiManager wm(debugOut);
+static bool s_wifi_saved_in_portal = false;
 
 static void applyWifiConfig(Config &cfg)
 {
@@ -38,9 +39,18 @@ static void applyWifiConfig(Config &cfg)
 
 static void disableWifiForEthernet()
 {
-  WiFi.softAPdisconnect(true);
-  WiFi.enableAP(false);
-  WiFi.mode(WIFI_OFF);
+  wifi_mode_t mode = WIFI_MODE_NULL;
+  esp_err_t err = esp_wifi_get_mode(&mode);
+  if (err == ESP_ERR_WIFI_NOT_INIT) {
+    return;
+  }
+  if (err != ESP_OK) {
+    return;
+  }
+  if (mode != WIFI_MODE_NULL) {
+    esp_wifi_set_mode(WIFI_MODE_NULL);
+    esp_wifi_stop();
+  }
 }
 
 static void enableWifiAfterEthernet(Config &cfg)
@@ -51,6 +61,24 @@ static void enableWifiAfterEthernet(Config &cfg)
   applyWifiConfig(cfg);
   WiFi.begin();
 }
+
+static bool ethernetIsActive()
+{
+  // Some PHY/driver combinations report ETH_GOT_IP without a reliable LINK_UP event.
+  return ethernetHasLink() || ethernetHasIp();
+}
+
+#ifdef BOARD_DINGTIAN
+static bool s_telnet_started = false;
+
+static void startTelnetIfWifiEnabled()
+{
+  if (!s_telnet_started && WiFi.getMode() != WIFI_OFF) {
+    debugOut.begin(23, false);
+    s_telnet_started = true;
+  }
+}
+#endif
 
 static void syncWifiCredsFlag(Config &cfg)
 {
@@ -64,6 +92,28 @@ static void syncWifiCredsFlag(Config &cfg)
 #endif
 }
 
+static bool hasSavedStaSsid()
+{
+#ifdef ESP32
+  wifi_config_t wifi_cfg = {};
+  if (esp_wifi_get_config(WIFI_IF_STA, &wifi_cfg) == ESP_OK) {
+    return wifi_cfg.sta.ssid[0] != '\0';
+  }
+#endif
+  return false;
+}
+
+static void kickWifiDhcpIfConnectedWithoutIp()
+{
+  if (WiFi.status() == WL_CONNECTED && WiFi.localIP() == IPAddress(0, 0, 0, 0)) {
+    dbgln("[wifi] connected without IP, restarting DHCP");
+    WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);
+    WiFi.disconnect(false, false);
+    delay(200);
+    WiFi.reconnect();
+  }
+}
+
 void setup() {
 #ifndef BOARD_DINGTIAN
   debugOut.begin(115200);
@@ -75,10 +125,6 @@ void setup() {
   prefs.begin("hec_1p3p");
   config.begin(&prefs);
   phaseSwitch.setSwitchDelay(config.getSwitchDelay());
-  dbgln("[wifi] start");
-  WiFi.mode(WIFI_STA);
-  applyWifiConfig(config);
-  syncWifiCredsFlag(config);
 
 #ifdef BOARD_DINGTIAN
   setupEthernet();
@@ -100,11 +146,22 @@ void setup() {
     dns2.fromString(config.getEthDns2());
     ethernetConfigureStatic(ip, gw, mask, dns1, dns2);
   }
-  const bool eth_ok = ethernetWaitForIp(5000);
+  const uint32_t link_wait_ms = 5000;
+  const uint32_t link_start = millis();
+  while (!ethernetIsActive() && (millis() - link_start) < link_wait_ms) {
+    delay(100);
+  }
+  const bool eth_link = ethernetIsActive();
+  if (eth_link) {
+    (void)ethernetWaitForIp(30000);
+  }
+  const bool eth_ok = eth_link;
 #endif
   
 #ifdef BOARD_DINGTIAN
-  debugOut.begin(23, false);
+  if (!eth_ok) {
+    startTelnetIfWifiEnabled();
+  }
 #endif
   wm.setDebugOutput(false);
 
@@ -112,19 +169,29 @@ void setup() {
   digitalWrite(PIN_FACTORY_LED, LOW);
 
   wm.setClass("invert");
-  auto reboot = false;
-  wm.setAPCallback([&reboot](WiFiManager *wifiManager){reboot = true;});
-  wm.setSaveConfigCallback([&](){ config.setWifiCredsSet(true); });
+  wm.setSaveConfigCallback([&](){
+    config.setWifiCredsSet(true);
+    s_wifi_saved_in_portal = true;
+  });
 #ifdef BOARD_DINGTIAN
   if (!eth_ok) {
+    dbgln("[wifi] start");
+    WiFi.mode(WIFI_STA);
+    applyWifiConfig(config);
+    syncWifiCredsFlag(config);
     wm.autoConnect();
+    kickWifiDhcpIfConnectedWithoutIp();
+  } else {
+    disableWifiForEthernet();
   }
 #else
+  dbgln("[wifi] start");
+  WiFi.mode(WIFI_STA);
+  applyWifiConfig(config);
+  syncWifiCredsFlag(config);
   wm.autoConnect();
+  kickWifiDhcpIfConnectedWithoutIp();
 #endif
-  if (reboot){
-    ESP.restart();
-  }
   MBUlogLvl = LOG_LEVEL_WARNING;
   LOGDEVICE = &debugOut;
   dbgln("[wifi] finished");
@@ -146,7 +213,19 @@ void loop() {
   debugOut.loop();
   static bool wifi_disabled_by_eth = false;
   static bool wifi_portal_triggered = false;
-  if (ethernetHasLink() && ethernetHasIp()) {
+  static bool wifi_state_initialized = false;
+
+  if (!wifi_state_initialized) {
+    // If we boot with Ethernet active and WiFi already off, remember that
+    // WiFi was intentionally suppressed by Ethernet policy.
+    if (ethernetIsActive() && WiFi.getMode() == WIFI_OFF) {
+      wifi_disabled_by_eth = true;
+    }
+    wifi_state_initialized = true;
+  }
+
+  if (ethernetIsActive()) {
+    wifi_portal_triggered = false;
     if (!wifi_disabled_by_eth && WiFi.getMode() != WIFI_OFF) {
       dbgln("[wifi] disabled due to ethernet");
       disableWifiForEthernet();
@@ -155,15 +234,28 @@ void loop() {
   } else {
     if (wifi_disabled_by_eth) {
       dbgln("[wifi] ethernet down, re-enabling wifi");
-      enableWifiAfterEthernet(config);
-      WiFi.reconnect();
+      if (hasSavedStaSsid()) {
+        enableWifiAfterEthernet(config);
+        WiFi.reconnect();
+      } else if (!wifi_portal_triggered) {
+        dbgln("[wifi] no saved credentials, starting config portal");
+        webServer.end();
+        WiFi.mode(WIFI_STA);
+        applyWifiConfig(config);
+        wm.setConfigPortalBlocking(true);
+        s_wifi_saved_in_portal = false;
+        (void)wm.startConfigPortal();
+        wm.stopWebPortal();
+        wm.stopConfigPortal();
+        if (s_wifi_saved_in_portal) {
+          dbgln("[wifi] portal finished, rebooting");
+          delay(500);
+          ESP.restart();
+        }
+        wifi_portal_triggered = s_wifi_saved_in_portal;
+      }
+      startTelnetIfWifiEnabled();
       wifi_disabled_by_eth = false;
-    }
-    if (!wifi_portal_triggered && !wm.getWiFiIsSaved()) {
-      dbgln("[wifi] no saved credentials, rebooting into config portal");
-      wifi_portal_triggered = true;
-      delay(100);
-      ESP.restart();
     }
   }
 #endif
@@ -185,13 +277,17 @@ void loop() {
     }
 
     if (WiFi.status() != WL_CONNECTED) {
-      if (wifi_reconnect_since == 0) {
-        wifi_reconnect_since = millis();
-      } else if (millis() - wifi_reconnect_since > 15000) {
-        dbgln("[wifi] not connected, retrying");
-        applyWifiConfig(config);
-        WiFi.reconnect();
+      if (!hasSavedStaSsid()) {
         wifi_reconnect_since = 0;
+      } else {
+        if (wifi_reconnect_since == 0) {
+          wifi_reconnect_since = millis();
+        } else if (millis() - wifi_reconnect_since > 15000) {
+          dbgln("[wifi] not connected, retrying");
+          applyWifiConfig(config);
+          WiFi.reconnect();
+          wifi_reconnect_since = 0;
+        }
       }
     } else {
       wifi_reconnect_since = 0;

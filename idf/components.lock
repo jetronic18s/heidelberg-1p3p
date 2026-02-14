@@ -1,0 +1,14 @@
+# Component lockfile for ESP-IDF build
+# Format: name | url | commit | tree
+
+arduino | https://github.com/espressif/arduino-esp32.git | 11bc7ac1a458f1f4e7afc8fd4de1dfa710f31562 | 6dab897de8b9905934f001d48a1607ac8e1d2b79
+AsyncTCP | https://github.com/me-no-dev/AsyncTCP.git | ef448a8a1dffe4ec1b72326dd5a26211ff227b49 | fc8c9ead07588ff984b7163156757a675cd42738
+ESPAsyncWebServer | https://github.com/me-no-dev/ESPAsyncWebServer.git | ad3741d159f9cfd50c567e81b67f3bef1dc6d89f | c2e1f371b6faacae778a1360609dc3b81a917045
+WiFiManager | https://github.com/PBRunot/WiFiManager.git | 0404abde0d9d2da5c09be7d0cc669b1188bb1c81 | d21e305d171e0628872c8ee51b07a7cef2bd3ab9
+
+eModbus | https://github.com/eModbus/eModbus.git | ed343224827600409e4d57e77e60b73ff9c22f1a | adcc2926b8cdce560b7d26fee6604bf44f152b57
+ESPTelnet | https://github.com/LennartHennigs/ESPTelnet.git | 545891d0968baf394dfdad1150286b29a54e163d | a75df5013ff454220e6a88e8e29dd55a9f1258c0
+Uptime | https://github.com/yiannisbourkelis/Uptime-Library.git | fa29a94f5664b70175eadd79f8aaf1464a966dc5 | cc0f90ababfb867db50d67cafffcea746369f078
+
+joltwallet__littlefs | https://github.com/joltwallet/esp_littlefs.git | 92ac3c2dce8c62c4b47bdb33e8461a4670411475 | 0626777cbbe716ebea88e277f3a93acaa73ee9ec
+littlefs | https://github.com/littlefs-project/littlefs.git | adad0fbbcf5382c20978d07f94f9c13be9041c1b | bc0861eb72ed11924918ec2172b5655da7066218

@@ -35,6 +35,26 @@ Der Dingtian DT-R002 (DEV) hat einen JL1101 PHY (RTL8201F kompatibel) und einen 
 - Build-Umgebung: `env:dingtian`
 - Framework: Arduino als ESP-IDF Component (siehe `platformio.ini`)
 
+### Build (PlatformIO)
+
+- Build: `/home/cjaeger/.platformio/penv/bin/pio run -e dingtian`
+- Flashen (Beispiel): `/home/cjaeger/.platformio/penv/bin/pio run -e dingtian -t upload --upload-port /dev/ttyUSB0`
+- Monitor (Beispiel): `/home/cjaeger/.platformio/penv/bin/pio device monitor -b 115200 -p /dev/ttyUSB0`
+- Hinweis: Dieser PlatformIO-`dingtian`-Build nutzt aktuell ESP-IDF `4.4.5` (siehe Build-Log).
+- Der `upload` schreibt i.d.R. Bootloader, Partition Table und App-Firmware.
+- NVS/Preferences werden dabei normalerweise nicht gelöscht.
+- Vollständiges Löschen (inkl. NVS) vor dem Flashen: `/home/cjaeger/.platformio/penv/bin/pio run -e dingtian -t erase -t upload --upload-port /dev/ttyUSB0`
+
+### Build (ESP-IDF 5.5.2)
+
+- Für ESP-IDF `5.5.2` den separaten `idf/`-Build verwenden:
+- `cd idf`
+- `. ~/esp-idf/export.sh`
+- `./scripts/fetch_components.sh`
+- `idf.py set-target esp32`
+- `idf.py -p /dev/ttyUSB0 flash monitor`
+- Details: siehe `idf/README_IDF.md`.
+
 ### Statusanzeige
 
 Unter **Status** werden die Ethernet MAC und IP angezeigt (zusätzlich zu WiFi). Wenn WLAN oder LAN nicht aktiv sind, werden deren IP‑Felder leer gelassen. Zusätzlich wird angezeigt, ob WLAN‑Credentials gesetzt sind.
