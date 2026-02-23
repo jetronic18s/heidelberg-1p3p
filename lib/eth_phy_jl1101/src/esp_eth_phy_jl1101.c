@@ -6,7 +6,12 @@
 #include "esp_check.h"
 #include "esp_eth.h"
 #include "esp_eth_com.h"
+#if __has_include("esp_eth_phy_802_3.h")
 #include "esp_eth_phy_802_3.h"
+#define ETH_PHY_DETECT_ADDR esp_eth_phy_802_3_detect_phy_addr
+#else
+#define ETH_PHY_DETECT_ADDR esp_eth_detect_phy_addr
+#endif
 #include "esp_log.h"
 #if __has_include("eth_phy_802_3_regs.h")
 #include "eth_phy_802_3_regs.h"
@@ -137,12 +142,14 @@ err:
     return ret;
 }
 
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
 static esp_err_t jl1101_set_link(esp_eth_phy_t *phy, eth_link_t link)
 {
     phy_jl1101_t *jl1101 = __containerof(phy, phy_jl1101_t, parent);
     jl1101->link_status = link;
     return ESP_OK;
 }
+#endif
 
 static esp_err_t jl1101_reset(esp_eth_phy_t *phy)
 {
@@ -214,6 +221,7 @@ err:
     return ret;
 }
 
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
 static esp_err_t jl1101_autonego_ctrl(esp_eth_phy_t *phy, eth_phy_autoneg_cmd_t cmd, bool *autonego_en_stat)
 {
     PHY_CHECK(autonego_en_stat, "autonego_en_stat can't be null", err);
@@ -236,6 +244,7 @@ static esp_err_t jl1101_autonego_ctrl(esp_eth_phy_t *phy, eth_phy_autoneg_cmd_t 
 err:
     return ESP_ERR_INVALID_ARG;
 }
+#endif
 
 static esp_err_t jl1101_pwrctl(esp_eth_phy_t *phy, bool enable)
 {
@@ -335,7 +344,7 @@ static esp_err_t jl1101_init(esp_eth_phy_t *phy)
     phyidr2_reg_t id2;
     if (jl1101->addr == ESP_ETH_PHY_ADDR_AUTO) {
         int detected_addr = jl1101->addr;
-        PHY_CHECK(esp_eth_phy_802_3_detect_phy_addr(eth, &detected_addr) == ESP_OK, "Detect PHY address failed", err);
+        PHY_CHECK(ETH_PHY_DETECT_ADDR(eth, &detected_addr) == ESP_OK, "Detect PHY address failed", err);
         jl1101->addr = detected_addr;
     }
     /* Power on Ethernet PHY */
@@ -383,9 +392,15 @@ esp_eth_phy_t *esp_eth_phy_new_jl1101(const eth_phy_config_t *config)
     jl1101->parent.init = jl1101_init;
     jl1101->parent.deinit = jl1101_deinit;
     jl1101->parent.set_mediator = jl1101_set_mediator;
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
     jl1101->parent.autonego_ctrl = jl1101_autonego_ctrl;
+#else
+    jl1101->parent.negotiate = jl1101_negotiate;
+#endif
     jl1101->parent.get_link = jl1101_get_link;
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
     jl1101->parent.set_link = jl1101_set_link;
+#endif
     jl1101->parent.pwrctl = jl1101_pwrctl;
     jl1101->parent.get_addr = jl1101_get_addr;
     jl1101->parent.set_addr = jl1101_set_addr;

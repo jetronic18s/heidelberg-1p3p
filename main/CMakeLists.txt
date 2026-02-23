@@ -1,11 +1,11 @@
-set(SRC_DIR "${CMAKE_CURRENT_LIST_DIR}/../../src")
-set(INC_DIR "${CMAKE_CURRENT_LIST_DIR}/../../include")
+set(SRC_DIR "${CMAKE_CURRENT_LIST_DIR}/../src")
+set(INC_DIR "${CMAKE_CURRENT_LIST_DIR}/../include")
 
 file(GLOB MAIN_SRCS
     "${SRC_DIR}/*.cpp"
 )
 list(APPEND MAIN_SRCS
-    "${SRC_DIR}/esp_log_wrap_shim.cpp"
+    "${SRC_DIR}/modbus_serial_adapter.cpp"
 )
 
 idf_component_register(
@@ -13,11 +13,10 @@ idf_component_register(
     INCLUDE_DIRS "${INC_DIR}"
     REQUIRES
         arduino
-        AsyncTCP
-        ESPAsyncWebServer
-        WiFiManager
+        nvs_flash
+        app_update
+        esp_http_server
         eModbus
-        ESPTelnet
         Uptime
         eth_phy_jl1101
 )

@@ -1,30 +1,30 @@
-name: PlatformIO CI
+name: ESP-IDF CI
 
-on: [push]
+on:
+  push:
+  pull_request:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cache/pip
-            ~/.platformio/.cache
-          key: ${{ runner.os }}-pio
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-      - name: Install PlatformIO Core
-        run: pip install --upgrade platformio
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Build PlatformIO Project
-        run: pio run -e dingtian
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v3
+      - name: Build ESP-IDF project
+        uses: espressif/esp-idf-ci-action@v1
         with:
-          name: image
-          path: .pio/build/dingtian/firmware.bin
+          esp_idf_version: v5.5.2
+          target: esp32
+          path: .
+          command: |
+            ./scripts/fetch_components.sh
+            ./scripts/check_no_arduino_types.sh
+            idf.py build
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: heidelberg-1p3p-bin
+          path: build/heidelberg-1p3p.bin
+          if-no-files-found: error

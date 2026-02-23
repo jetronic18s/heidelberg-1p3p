@@ -1,11 +1,9 @@
 #ifndef MAIN_H
     #define MAIN_H
-    #include <WiFi.h>
-    #include <AsyncTCP.h>
-    #include <WiFiManager.h>
-    #include <ESPAsyncWebServer.h>
-    #include <Logging.h>
+    #include <esp_event.h>
+    #include <esp_wifi.h>
     #include "config.h"
     #include "switch.h"
     #include "pages.h"
+    #include "wifi_native.h"
 #endif /* MAIN_H */

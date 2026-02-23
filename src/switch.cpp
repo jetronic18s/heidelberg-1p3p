@@ -1,4 +1,36 @@
 #include "switch.h"
+#include "modbus_serial_adapter.h"
+#include "driver/gpio.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+static uint32_t nowMs()
+{
+  return (uint32_t)(esp_timer_get_time() / 1000ULL);
+}
+
+static void pinModeOutput(int pin)
+{
+  gpio_reset_pin((gpio_num_t)pin);
+  gpio_set_direction((gpio_num_t)pin, GPIO_MODE_OUTPUT);
+}
+
+static void pinModeInput(int pin)
+{
+  gpio_reset_pin((gpio_num_t)pin);
+  gpio_set_direction((gpio_num_t)pin, GPIO_MODE_INPUT);
+}
+
+static void writePin(int pin, int level)
+{
+  gpio_set_level((gpio_num_t)pin, level);
+}
+
+static int readPin(int pin)
+{
+  return gpio_get_level((gpio_num_t)pin);
+}
 
 PhaseSwitch::PhaseSwitch()
   :_previous(0)
@@ -12,50 +44,48 @@ PhaseSwitch::PhaseSwitch()
   ,_client(PIN_RS485_DE)
   ,_bridge()
   ,_serverId(1)
+  ,_requestToken(0)
 {}
 
 void PhaseSwitch::begin(){
-  pinMode(PIN_1P_OUT, OUTPUT);
-  digitalWrite(PIN_1P_OUT, RELAY_OFF);
-  pinMode(PIN_3P_OUT, OUTPUT);
-  digitalWrite(PIN_3P_OUT, RELAY_OFF);
+  pinModeOutput(PIN_1P_OUT);
+  writePin(PIN_1P_OUT, RELAY_OFF);
+  pinModeOutput(PIN_3P_OUT);
+  writePin(PIN_3P_OUT, RELAY_OFF);
   // GPIO36/39 are input-only on ESP32 and have no internal pullups.
-  pinMode(PIN_1P_IN, INPUT);
-  pinMode(PIN_3P_IN, INPUT);
+  pinModeInput(PIN_1P_IN);
+  pinModeInput(PIN_3P_IN);
 }
 
 void PhaseSwitch::beginModbus(){
-  RTUutils::prepareHardwareSerial(modbusSerial);
-  modbusSerial.begin(19200, SERIAL_8E1);
-  _client.setTimeout(500);
-  _client.begin(modbusSerial, 1);
-  _bridge.attachServer(_serverId, _serverId, ANY_FUNCTION_CODE, &_client);
-  _bridgeWorker = _bridge.getWorker(_serverId, ANY_FUNCTION_CODE);
+  setupModbusClientSerial(_client);
+  _bridge.registerWorker(_serverId, Modbus::ANY_FUNCTION_CODE, [this](ModbusMessage msg){ return this->bridgeCall(msg); });
   _bridge.start(502, 10, 30000);
 }
 
 ModbusMessage PhaseSwitch::bridgeCall(ModbusMessage msg){
-  if (_bridgeWorker){
-    return _bridgeWorker(msg);
+  if (msg.getServerID() != _serverId) {
+    ModbusMessage response;
+    response.setError(msg.getServerID(), msg.getFunctionCode(), INVALID_SERVER);
+    return response;
   }
-  ModbusMessage response;
-  response.setError(msg.getServerID(), msg.getFunctionCode(), ILLEGAL_FUNCTION);
-  return response;
+  _requestToken++;
+  return _client.syncRequest(msg, _requestToken);
 }
 
 void PhaseSwitch::loop(){
   if (_delay > 0){
-    if (millis() - _previous < _delay){
+    if (nowMs() - _previous < _delay){
       return;
     }
     _delay = 0;
   }
   if (_state == State::WaitingForOff){
-    if (digitalRead(PIN_1P_IN) == LOW && digitalRead(PIN_3P_IN) == LOW){
+    if (readPin(PIN_1P_IN) == 0 && readPin(PIN_3P_IN) == 0){
       dbgln("confirmed off");
       _switchingSupported = true;
       _state = State::ConfirmedOff;
-      _previous = millis();
+      _previous = nowMs();
       _delay = 2000;//todo configurable delay
     }
     return;
@@ -64,19 +94,19 @@ void PhaseSwitch::loop(){
     //4. nach validierter Ladeunterbrechung das L2L3-Schütz entsprechend an oder ausgeschaltet wird,
     if (_desiredPhases == 3){
       dbgln("switching on 3p");
-      digitalWrite(PIN_3P_OUT, RELAY_ON);
+      writePin(PIN_3P_OUT, RELAY_ON);
       _state = State::SwitchedOn;
     }
     else{
       dbgln("switching on 1p");
-      digitalWrite(PIN_1P_OUT, RELAY_ON);
+      writePin(PIN_1P_OUT, RELAY_ON);
       _state = State::SwitchedOn;
     }
     return;
   }
   if (!validateSetup()) {
     dbgln("setup validation failed");
-    _previous = millis();
+    _previous = nowMs();
     _delay = 1000;
     return;
   }
@@ -114,8 +144,8 @@ void PhaseSwitch::loop(){
     return;
   }
   else if (_state == State::ConfirmedZero){
-    digitalWrite(PIN_1P_OUT, RELAY_OFF);
-    digitalWrite(PIN_3P_OUT, RELAY_OFF);
+    writePin(PIN_1P_OUT, RELAY_OFF);
+    writePin(PIN_3P_OUT, RELAY_OFF);
     _state = State::WaitingForOff;
     dbgln("switched off");
     return;
@@ -123,18 +153,18 @@ void PhaseSwitch::loop(){
   else if (_state == State::SwitchedOn){
     //5. die gewünschte Zielposition des Schütz über den Hilfskontakt und die Phasenspannungsregister (>=208V) geprüft wird,
     if (_desiredPhases == 3){
-      if (digitalRead(PIN_3P_IN) != HIGH) return;
+      if (readPin(PIN_3P_IN) != 1) return;
       if (getActivePhases() != 3) {
-        _previous = millis();
+        _previous = nowMs();
         _delay = 1000;
         return;
       }
       dbgln("confirmed 3p");
     }
     else {
-      if (digitalRead(PIN_1P_IN) != HIGH) return;
+      if (readPin(PIN_1P_IN) != 1) return;
       if (getActivePhases() != 1) {
-        _previous = millis();
+        _previous = nowMs();
         _delay = 1000;
         return;
       }
@@ -142,7 +172,7 @@ void PhaseSwitch::loop(){
     }
     _state = State::Delay;
     //6. ein einstellbarer Zeitraum lang gewartet wird (Default 120 Sekunden),
-    _previous = millis();
+    _previous = nowMs();
     _delay = _switchDelay;
     return;
   }
@@ -185,8 +215,8 @@ bool PhaseSwitch::canSwitchTo3P(){
     && _desiredPhases == 1;
 }
 
-void PhaseSwitch::setSwitchDelay(uint32_t millis){
-  _switchDelay = millis;
+void PhaseSwitch::setSwitchDelay(uint32_t delayMs){
+  _switchDelay = delayMs;
 }
 
 uint32_t PhaseSwitch::getRtuMessageCount(){
@@ -217,12 +247,12 @@ ModbusMessage PhaseSwitch::sendRtuRequest(uint8_t serverID, uint8_t functionCode
   return _client.syncRequest(0xdeadbeef, serverID, functionCode, p1, p2);
 }
 
-const String PhaseSwitch::getState(){
-  String result;
-  if (digitalRead(PIN_1P_IN) == HIGH){
+std::string PhaseSwitch::getState(){
+  std::string result;
+  if (readPin(PIN_1P_IN) == 1){
    result = "1P ";
   }
-  else if (digitalRead(PIN_3P_IN) == HIGH){
+  else if (readPin(PIN_3P_IN) == 1){
    result = "3P ";
   }
   else{
@@ -241,9 +271,9 @@ const String PhaseSwitch::getState(){
     default: result += "undefined"; break;
   }
   if (_delay > 0){
-    auto passed = millis() - _previous;
+    auto passed = nowMs() - _previous;
     auto remaining = _delay - passed;
-    return result + " (delayed for " + remaining + "ms)";
+    return result + " (delayed for " + std::to_string(remaining) + "ms)";
   }
   return result;
 }

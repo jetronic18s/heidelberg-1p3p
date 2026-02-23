@@ -1,8 +1,11 @@
 #ifndef SWITCH_H
     #define SWITCH_H
-    #include <Arduino.h>
-    #include <ModbusBridgeWiFi.h>
+    #include <cstddef>
+    #include <cstdint>
+    #include <string>
+    #include <vector>
     #include <ModbusClientRTU.h>
+    #include "modbus_tcp_bridge.h"
     #include "config.h"
     #include "debug.h"
 
@@ -32,8 +35,8 @@
 
     class PhaseSwitch{
         private:
-            unsigned long _previous;
-            unsigned long _delay;
+            uint32_t _previous;
+            uint32_t _delay;
             State _state;
             uint8_t _desiredPhases;
             bool _switchingSupported;
@@ -45,9 +48,9 @@
             uint8_t getActivePhases();
             //modbus
             ModbusClientRTU _client;
-            ModbusBridgeWiFi _bridge;
+            ModbusTcpBridge _bridge;
             uint8_t _serverId;
-            MBSworker _bridgeWorker;
+            uint32_t _requestToken;
             ModbusMessage onWriteHolding(ModbusMessage msg);
             ModbusMessage bridgeCall(ModbusMessage msg);
             ModbusMessage cacheWriteHolding(ModbusMessage msg);
@@ -66,7 +69,7 @@
             void switchTo3P();
             bool canSwitchTo1P();
             bool canSwitchTo3P();
-            void setSwitchDelay(uint32_t millis);
+            void setSwitchDelay(uint32_t delayMs);
             uint32_t getRtuMessageCount();
             uint32_t getRtuPendingRequestCount();
             uint32_t getRtuErrorCount();
@@ -74,7 +77,7 @@
             uint32_t getBridgeActiveClientCount();
             uint32_t getBridgeErrorCount();
             ModbusMessage sendRtuRequest(uint8_t serverID, uint8_t functionCode, uint16_t p1, uint16_t p2);
-            const String getState();
+            std::string getState();
             uint16_t getHoldingRegister(size_t reg);
             uint16_t getInputRegister(size_t reg);
             bool updateCachedRegisters();

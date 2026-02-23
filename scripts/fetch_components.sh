@@ -69,7 +69,7 @@ for line in lines:
         suffix = ")"
         body = line[len(prefix):-len(suffix)].strip()
         parts = body.split()
-        required = ["esp_timer", "esp_netif", "esp_wifi", "network_provisioning"]
+        required = ["esp_timer", "esp_netif", "esp_wifi"]
         for item in required:
             if item not in parts:
                 parts.append(item)
@@ -113,41 +113,38 @@ if old in text:
 PY
 }
 
-patch_arduino_component_alias() {
-  local async_cmake="${COMP_DIR}/AsyncTCP/CMakeLists.txt"
-  local web_cmake="${COMP_DIR}/ESPAsyncWebServer/CMakeLists.txt"
+patch_arduino_component_manifest() {
+  local arduino_manifest="${COMP_DIR}/arduino/idf_component.yml"
+  if [[ ! -f "${arduino_manifest}" ]]; then
+    return 0
+  fi
 
-  python3 - "$async_cmake" "$web_cmake" <<'PY'
-from pathlib import Path
-import sys
-
-for p in sys.argv[1:]:
-    path = Path(p)
-    if not path.exists():
-        continue
-    text = path.read_text()
-    if "arduino-esp32" in text:
-        path.write_text(text.replace("arduino-esp32", "arduino"))
-PY
-}
-
-patch_wifi_manager_format_specifiers() {
-  local wm_cpp="${COMP_DIR}/WiFiManager/WiFiManager.cpp"
-
-  python3 - "$wm_cpp" <<'PY'
+  python3 - "$arduino_manifest" <<'PY'
 from pathlib import Path
 import sys
 
 path = Path(sys.argv[1])
-if not path.exists():
+text = path.read_text()
+
+marker = "\ndependencies:\n"
+idx = text.find(marker)
+if idx < 0:
     raise SystemExit(0)
 
-text = path.read_text()
-old = '_debugPort.printf("[MEM] free: %5u | max: %5u | frag: %3u%% \\n", free, max, frag);'
-new = '_debugPort.printf("[MEM] free: %5lu | max: %5u | frag: %3u%% \\n", (unsigned long)free, max, frag);'
-if old in text:
-    text = text.replace(old, new)
-    path.write_text(text)
+examples_marker = "\nexamples:\n"
+eidx = text.find(examples_marker, idx + 1)
+if eidx < 0:
+    raise SystemExit(0)
+
+minimal = """\ndependencies:
+  idf: ">=5.3,<5.6"
+  joltwallet/littlefs:
+    version: "^1.10.2"
+"""
+
+patched = text[:idx] + minimal + text[eidx:]
+if patched != text:
+    path.write_text(patched)
 PY
 }
 
@@ -173,32 +170,25 @@ PY
 
 ensure_component_cmakelists() {
   local emodbus_cmake="${COMP_DIR}/eModbus/CMakeLists.txt"
-  local telnet_cmake="${COMP_DIR}/ESPTelnet/CMakeLists.txt"
   local uptime_cmake="${COMP_DIR}/Uptime/CMakeLists.txt"
 
-  if [[ ! -f "${emodbus_cmake}" ]]; then
-    cat > "${emodbus_cmake}" <<'EOF'
-file(GLOB EMODBUS_SRCS "src/*.cpp")
+  cat > "${emodbus_cmake}" <<'EOF'
+set(EMODBUS_SRCS
+  "src/CoilData.cpp"
+  "src/Logging.cpp"
+  "src/ModbusClient.cpp"
+  "src/ModbusClientRTU.cpp"
+  "src/ModbusMessage.cpp"
+  "src/ModbusTypeDefs.cpp"
+  "src/RTUutils.cpp"
+)
 
 idf_component_register(
   SRCS ${EMODBUS_SRCS}
   INCLUDE_DIRS "src"
-  PRIV_REQUIRES arduino AsyncTCP
-)
-EOF
-  fi
-
-  if [[ ! -f "${telnet_cmake}" ]]; then
-    cat > "${telnet_cmake}" <<'EOF'
-file(GLOB ESPTELNET_SRCS "src/*.cpp")
-
-idf_component_register(
-  SRCS ${ESPTELNET_SRCS}
-  INCLUDE_DIRS "src"
   PRIV_REQUIRES arduino
 )
 EOF
-  fi
 
   if [[ ! -f "${uptime_cmake}" ]]; then
     cat > "${uptime_cmake}" <<'EOF'
@@ -217,8 +207,8 @@ ensure_local_eth_phy_component() {
   local dst="${COMP_DIR}/eth_phy_jl1101"
   mkdir -p "${dst}/src" "${dst}/include"
 
-  cp -f "${ROOT_DIR}/../lib/eth_phy_jl1101/src/esp_eth_phy_jl1101.c" "${dst}/src/esp_eth_phy_jl1101.c"
-  cp -f "${ROOT_DIR}/../lib/eth_phy_jl1101/include/esp_eth_phy_jl1101.h" "${dst}/include/esp_eth_phy_jl1101.h"
+  cp -f "${ROOT_DIR}/lib/eth_phy_jl1101/src/esp_eth_phy_jl1101.c" "${dst}/src/esp_eth_phy_jl1101.c"
+  cp -f "${ROOT_DIR}/lib/eth_phy_jl1101/include/esp_eth_phy_jl1101.h" "${dst}/include/esp_eth_phy_jl1101.h"
 
   cat > "${dst}/CMakeLists.txt" <<'EOF'
 idf_component_register(
@@ -227,6 +217,17 @@ idf_component_register(
   REQUIRES esp_eth esp_driver_gpio
 )
 EOF
+}
+
+remove_legacy_components() {
+  # Legacy components can still be discovered by ESP-IDF and trigger
+  # unintended side effects or stale dependencies.
+  # WiFiManager is no longer used; a leftover local component can still be
+  # discovered by ESP-IDF and trigger unwanted AP/STA side effects.
+  rm -rf "${COMP_DIR}/WiFiManager"
+  rm -rf "${COMP_DIR}/ESPAsyncWebServer"
+  rm -rf "${COMP_DIR}/ESPTelnet"
+  rm -rf "${COMP_DIR}/AsyncTCP"
 }
 
 while IFS='|' read -r name url commit tree; do
@@ -258,10 +259,10 @@ fi
 
 patch_arduino_cmake_requires
 patch_arduino_network_event_group
-patch_arduino_component_alias
-patch_wifi_manager_format_specifiers
+patch_arduino_component_manifest
 patch_emodbus_format_specifiers
 ensure_component_cmakelists
 ensure_local_eth_phy_component
+remove_legacy_components
 
 echo "Done."

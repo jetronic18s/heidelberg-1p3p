@@ -1,11 +1,10 @@
 #ifndef CONFIG_H
     #define CONFIG_H
-    #include <Arduino.h>
-    #include <Preferences.h>
+    #include <cstdint>
+    #include <nvs.h>
+    #include <string>
 
     #ifdef BOARD_DINGTIAN
-        #define debugOut telnet
-        #define modbusSerial Serial
         #define PIN_1P_IN 36
         #define PIN_1P_OUT 16
         #define PIN_3P_IN 39
@@ -17,76 +16,87 @@
         #define PIN_ETH_MDIO 18
         #define PIN_ETH_PWR 0
         #define PIN_ETH_CLK 17
-        #define RELAY_ON HIGH
-        #define RELAY_OFF LOW
+        #define RELAY_ON 1
+        #define RELAY_OFF 0
     #else
-        #define debugOut Serial
-        #define modbusSerial Serial2
-
         #define PIN_1P_IN 33
         #define PIN_1P_OUT 26
         #define PIN_3P_IN 25
         #define PIN_3P_OUT 27
         #define PIN_RS485_DE -1
-        #define RELAY_ON LOW
-        #define RELAY_OFF HIGH
+        #define RELAY_ON 0
+        #define RELAY_OFF 1
     #endif
 
     class Config{
         private:
-            Preferences *_prefs;
+            bool _nvsReady;
+            nvs_handle_t _nvsHandle;
             uint32_t _switchDelay;
             bool _ethDhcp;
-            String _ethIp;
-            String _ethGw;
-            String _ethMask;
-            String _ethDns1;
-            String _ethDns2;
+            std::string _ethIp;
+            std::string _ethGw;
+            std::string _ethMask;
+            std::string _ethDns1;
+            std::string _ethDns2;
             bool _wifiDhcp;
-            String _wifiIp;
-            String _wifiGw;
-            String _wifiMask;
-            String _wifiDns1;
-            String _wifiDns2;
+            std::string _wifiIp;
+            std::string _wifiGw;
+            std::string _wifiMask;
+            std::string _wifiDns1;
+            std::string _wifiDns2;
             bool _wifiCredsSet;
+            bool _wifiResetPending;
             bool _modbusEnabled;
-            String _hostname;
+            bool _telnetEnabled;
+            std::string _hostname;
+            bool readBool(const char *key, bool defaultValue);
+            bool tryReadBool(const char *key, bool *outValue);
+            uint32_t readUInt32(const char *key, uint32_t defaultValue);
+            std::string readString(const char *key, const std::string &defaultValue);
+            void writeBool(const char *key, bool value);
+            void writeUInt32(const char *key, uint32_t value);
+            void writeString(const char *key, const std::string &value);
         public:
             Config();
-            void begin(Preferences *prefs);
+            void begin();
             uint32_t getSwitchDelay();
             void setSwitchDelay(uint32_t value);
             bool getEthDhcp();
             void setEthDhcp(bool value);
-            String getEthIp();
-            void setEthIp(String value);
-            String getEthGw();
-            void setEthGw(String value);
-            String getEthMask();
-            void setEthMask(String value);
-            String getEthDns1();
-            void setEthDns1(String value);
-            String getEthDns2();
-            void setEthDns2(String value);
+            std::string getEthIp();
+            void setEthIp(const std::string &value);
+            std::string getEthGw();
+            void setEthGw(const std::string &value);
+            std::string getEthMask();
+            void setEthMask(const std::string &value);
+            std::string getEthDns1();
+            void setEthDns1(const std::string &value);
+            std::string getEthDns2();
+            void setEthDns2(const std::string &value);
             bool getWifiDhcp();
             void setWifiDhcp(bool value);
-            String getWifiIp();
-            void setWifiIp(String value);
-            String getWifiGw();
-            void setWifiGw(String value);
-            String getWifiMask();
-            void setWifiMask(String value);
-            String getWifiDns1();
-            void setWifiDns1(String value);
-            String getWifiDns2();
-            void setWifiDns2(String value);
+            std::string getWifiIp();
+            void setWifiIp(const std::string &value);
+            std::string getWifiGw();
+            void setWifiGw(const std::string &value);
+            std::string getWifiMask();
+            void setWifiMask(const std::string &value);
+            std::string getWifiDns1();
+            void setWifiDns1(const std::string &value);
+            std::string getWifiDns2();
+            void setWifiDns2(const std::string &value);
             bool getWifiCredsSet();
             void setWifiCredsSet(bool value);
+            bool getWifiResetPending();
+            void setWifiResetPending(bool value);
             bool getModbusEnabled();
             void setModbusEnabled(bool value);
-            String getHostname();
-            void setHostname(String value);
-            static bool isHostnameValid(const String &value);
+            bool getTelnetEnabled();
+            void setTelnetEnabled(bool value);
+            std::string getHostname();
+            void setHostname(const std::string &value);
+            static bool isHostnameValid(const std::string &value);
     };
 
 #endif /* CONFIG_H */
