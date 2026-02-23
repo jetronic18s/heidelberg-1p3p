@@ -1,5 +1,6 @@
 #include "switch.h"
 #include "modbus_serial_adapter.h"
+#include <cstdio>
 #include "driver/gpio.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -9,6 +10,12 @@ static uint32_t nowMs()
 {
   return (uint32_t)(esp_timer_get_time() / 1000ULL);
 }
+
+static constexpr uint16_t SAFETY_FAULT_NONE = 0x0000;
+static constexpr uint16_t SAFETY_FAULT_FEEDBACK_BOTH_ACTIVE = 0xE101;
+static constexpr uint16_t SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT = 0xE102;
+static constexpr uint16_t SAFETY_FAULT_RUNNING_FEEDBACK_INVALID = 0xE103;
+static constexpr uint32_t SWITCH_CONFIRM_TIMEOUT_MS = 8000;
 
 static void pinModeOutput(int pin)
 {
@@ -45,6 +52,9 @@ PhaseSwitch::PhaseSwitch()
   ,_bridge()
   ,_serverId(1)
   ,_requestToken(0)
+  ,_safetyFaultCode(SAFETY_FAULT_NONE)
+  ,_safetyFaultText("")
+  ,_switchOnDeadlineMs(0)
 {}
 
 void PhaseSwitch::begin(){
@@ -74,6 +84,17 @@ ModbusMessage PhaseSwitch::bridgeCall(ModbusMessage msg){
 }
 
 void PhaseSwitch::loop(){
+  const bool oneFeedback = (readPin(PIN_1P_IN) == 1);
+  const bool threeFeedback = (readPin(PIN_3P_IN) == 1);
+  if (oneFeedback && threeFeedback) {
+    enterSafetyFault(SAFETY_FAULT_FEEDBACK_BOTH_ACTIVE, "both contactor feedback inputs active");
+    return;
+  }
+
+  if (hasSafetyFault()) {
+    return;
+  }
+
   if (_delay > 0){
     if (nowMs() - _previous < _delay){
       return;
@@ -95,11 +116,13 @@ void PhaseSwitch::loop(){
     if (_desiredPhases == 3){
       dbgln("switching on 3p");
       writePin(PIN_3P_OUT, RELAY_ON);
+      _switchOnDeadlineMs = nowMs() + SWITCH_CONFIRM_TIMEOUT_MS;
       _state = State::SwitchedOn;
     }
     else{
       dbgln("switching on 1p");
       writePin(PIN_1P_OUT, RELAY_ON);
+      _switchOnDeadlineMs = nowMs() + SWITCH_CONFIRM_TIMEOUT_MS;
       _state = State::SwitchedOn;
     }
     return;
@@ -111,6 +134,10 @@ void PhaseSwitch::loop(){
     return;
   }
   if (_state == State::Running) {
+    if ((!oneFeedback && !threeFeedback) || (oneFeedback && threeFeedback)) {
+      enterSafetyFault(SAFETY_FAULT_RUNNING_FEEDBACK_INVALID, "invalid contactor feedback while running");
+      return;
+    }
     return;
   }
   else if (_state == State::SwitchPhases){
@@ -153,8 +180,18 @@ void PhaseSwitch::loop(){
   else if (_state == State::SwitchedOn){
     //5. die gewünschte Zielposition des Schütz über den Hilfskontakt und die Phasenspannungsregister (>=208V) geprüft wird,
     if (_desiredPhases == 3){
-      if (readPin(PIN_3P_IN) != 1) return;
+      if (readPin(PIN_3P_IN) != 1) {
+        if (nowMs() > _switchOnDeadlineMs) {
+          enterSafetyFault(SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT, "timeout waiting for 3P feedback input");
+          return;
+        }
+        return;
+      }
       if (getActivePhases() != 3) {
+        if (nowMs() > _switchOnDeadlineMs) {
+          enterSafetyFault(SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT, "timeout waiting for 3P confirmation");
+          return;
+        }
         _previous = nowMs();
         _delay = 1000;
         return;
@@ -162,8 +199,18 @@ void PhaseSwitch::loop(){
       dbgln("confirmed 3p");
     }
     else {
-      if (readPin(PIN_1P_IN) != 1) return;
+      if (readPin(PIN_1P_IN) != 1) {
+        if (nowMs() > _switchOnDeadlineMs) {
+          enterSafetyFault(SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT, "timeout waiting for 1P feedback input");
+          return;
+        }
+        return;
+      }
       if (getActivePhases() != 1) {
+        if (nowMs() > _switchOnDeadlineMs) {
+          enterSafetyFault(SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT, "timeout waiting for 1P confirmation");
+          return;
+        }
         _previous = nowMs();
         _delay = 1000;
         return;
@@ -247,6 +294,28 @@ ModbusMessage PhaseSwitch::sendRtuRequest(uint8_t serverID, uint8_t functionCode
   return _client.syncRequest(0xdeadbeef, serverID, functionCode, p1, p2);
 }
 
+void PhaseSwitch::enterSafetyFault(uint16_t code, const char *text){
+  if (_safetyFaultCode != SAFETY_FAULT_NONE) {
+    return;
+  }
+
+  _safetyFaultCode = code;
+  _safetyFaultText = text ? std::string(text) : std::string("unspecified safety fault");
+  _delay = 0;
+  _switchOnDeadlineMs = 0;
+  writePin(PIN_1P_OUT, RELAY_OFF);
+  writePin(PIN_3P_OUT, RELAY_OFF);
+  _state = State::Fault;
+
+  char hex[5];
+  snprintf(hex, sizeof(hex), "%04X", code);
+  dbgln(std::string("SAFETY FAULT E") + hex + ": " + _safetyFaultText);
+}
+
+bool PhaseSwitch::hasSafetyFault(){
+  return _safetyFaultCode != SAFETY_FAULT_NONE;
+}
+
 std::string PhaseSwitch::getState(){
   std::string result;
   if (readPin(PIN_1P_IN) == 1){
@@ -268,7 +337,15 @@ std::string PhaseSwitch::getState(){
     case State::ConfirmedOff: result += "ConfirmedOff"; break;
     case State::SwitchedOn: result += "SwitchedOn"; break;
     case State::Delay: result += "Delay"; break;
+    case State::Fault: result += "Fault"; break;
     default: result += "undefined"; break;
+  }
+  if (_safetyFaultCode != SAFETY_FAULT_NONE){
+    char hex[5];
+    snprintf(hex, sizeof(hex), "%04X", _safetyFaultCode);
+    result += " [E";
+    result += hex;
+    result += "]";
   }
   if (_delay > 0){
     auto passed = nowMs() - _previous;
@@ -276,6 +353,17 @@ std::string PhaseSwitch::getState(){
     return result + " (delayed for " + std::to_string(remaining) + "ms)";
   }
   return result;
+}
+
+uint16_t PhaseSwitch::getSafetyFaultCode(){
+  return _safetyFaultCode;
+}
+
+std::string PhaseSwitch::getSafetyFaultText(){
+  if (_safetyFaultCode == SAFETY_FAULT_NONE){
+    return "none";
+  }
+  return _safetyFaultText;
 }
 
 uint16_t PhaseSwitch::getHoldingRegister(size_t reg){

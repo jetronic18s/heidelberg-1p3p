@@ -380,6 +380,10 @@ static esp_err_t handleStatusGet(httpd_req_t *req)
   sendTableRow(body, "Bridge Message", s_phase_switch->getBridgeMessageCount());
   sendTableRow(body, "Bridge Clients", s_phase_switch->getBridgeActiveClientCount());
   sendTableRow(body, "Bridge Errors", s_phase_switch->getBridgeErrorCount());
+  char safetyCode[16];
+  snprintf(safetyCode, sizeof(safetyCode), "0x%04X", (unsigned int)s_phase_switch->getSafetyFaultCode());
+  sendTableRow(body, "Safety Fault Code", safetyCode);
+  sendTableRow(body, "Safety Fault", s_phase_switch->getSafetyFaultText());
   sendTableRow(body, "Telnet Debug", (s_config->getModbusEnabled() && s_config->getTelnetEnabled()) ? "enabled (port 23)" : "disabled");
   body += "<tr><td>&nbsp;</td><td></td></tr>";
 

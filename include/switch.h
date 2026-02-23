@@ -31,6 +31,7 @@
         //confirmed phases -> Wait for Delay,
         Delay,
         //delay passed -> Running
+        Fault,
     };
 
     class PhaseSwitch{
@@ -51,6 +52,11 @@
             ModbusTcpBridge _bridge;
             uint8_t _serverId;
             uint32_t _requestToken;
+            uint16_t _safetyFaultCode;
+            std::string _safetyFaultText;
+            uint32_t _switchOnDeadlineMs;
+            void enterSafetyFault(uint16_t code, const char *text);
+            bool hasSafetyFault();
             ModbusMessage onWriteHolding(ModbusMessage msg);
             ModbusMessage bridgeCall(ModbusMessage msg);
             ModbusMessage cacheWriteHolding(ModbusMessage msg);
@@ -78,6 +84,8 @@
             uint32_t getBridgeErrorCount();
             ModbusMessage sendRtuRequest(uint8_t serverID, uint8_t functionCode, uint16_t p1, uint16_t p2);
             std::string getState();
+            uint16_t getSafetyFaultCode();
+            std::string getSafetyFaultText();
             uint16_t getHoldingRegister(size_t reg);
             uint16_t getInputRegister(size_t reg);
             bool updateCachedRegisters();
