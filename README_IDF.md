@@ -134,3 +134,18 @@ Notes:
 - Ethernet setup currently relies on `ethernet_jl1101.*` and IDF ethernet APIs.
 - Modbus TCP bridge uses an IDF socket server (`ModbusTcpBridge`), not AsyncTCP.
 - RS485 RTU client uses an IDF UART-backed `Stream` adapter.
+
+## Safety Fault Codes
+
+When a safety fault is detected, both contactor outputs are switched off and
+state changes to `Fault`. The status page shows `Safety Fault Code` and
+`Safety Fault`.
+
+- `0xE101`: both contactor feedback inputs are active at the same time.
+  Check wiring and feedback logic.
+- `0xE102`: timeout while confirming target state after switching (feedback
+  input and/or phase voltage confirmation did not arrive in time).
+  Check contactor movement, feedback inputs, and phase detection.
+- `0xE103`: invalid contactor feedback while state is `Running` (no active
+  feedback or inconsistent feedback).
+  Check contactor auxiliary contact wiring and input stability.
