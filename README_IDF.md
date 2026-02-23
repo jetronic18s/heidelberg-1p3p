@@ -127,6 +127,7 @@ Notes:
 - `modbus_regression.sh` requires `mbpoll`.
 - `modbus_stress.py` uses Python stdlib only (no extra pip dependency).
 - For first runs, keep `--max-transport-errors` at `0`; increase only if your network is noisy.
+- Full wallbox checklist: `docs/MODBUS_TEST_PROTOCOL.md`.
 
 ## Notes
 
