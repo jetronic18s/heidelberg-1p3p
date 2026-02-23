@@ -97,6 +97,37 @@ Notes:
 - Modbus checks require `mbpoll` in `PATH`.
 - Use `--skip-fetch`/`--skip-build` for quicker reruns.
 
+## Modbus Regression And Stress Tests
+
+From repository root:
+
+```bash
+./scripts/modbus_regression.sh --host 192.168.178.51
+```
+
+If no wallbox/RTU follower is connected yet, run bridge-only reachability:
+
+```bash
+./scripts/modbus_regression.sh --host 192.168.178.51 --bridge-only
+```
+
+Optional write/readback check (register 261, same-value roundtrip):
+
+```bash
+./scripts/modbus_regression.sh --host 192.168.178.51 --write-test
+```
+
+Parallel stress test with mixed normal/invalid/partial-frame traffic:
+
+```bash
+./scripts/modbus_stress.py --host 192.168.178.51 --clients 8 --duration-s 120
+```
+
+Notes:
+- `modbus_regression.sh` requires `mbpoll`.
+- `modbus_stress.py` uses Python stdlib only (no extra pip dependency).
+- For first runs, keep `--max-transport-errors` at `0`; increase only if your network is noisy.
+
 ## Notes
 
 - Ethernet setup currently relies on `ethernet_jl1101.*` and IDF ethernet APIs.
