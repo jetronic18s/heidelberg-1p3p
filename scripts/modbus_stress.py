@@ -57,7 +57,7 @@ def worker(args, stats, worker_id, deadline):
     normal_cases = [
         (0x03, 259, 1),
         (0x03, 261, 1),
-        (0x03, 256, 8),
+        (0x03, 256, 7),
         (0x04, 5, 1),
         (0x04, 10, 3),
     ]

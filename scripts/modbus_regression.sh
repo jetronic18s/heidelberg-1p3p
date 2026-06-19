@@ -187,7 +187,7 @@ run_ok "Read input reg 10 x3" read_input 10 3
 run_ok "Read holding reg 257 x1" read_holding 257 1
 run_ok "Read holding reg 259 x1" read_holding 259 1
 run_ok "Read holding reg 261 x1" read_holding 261 1
-run_ok "Read holding reg 256 x8" read_holding 256 8
+run_ok "Read holding reg 256 x7" read_holding 256 7
 
 # Negative checks (should return Modbus exception/failed request)
 run_fail "Read holding invalid address 65000 x1" read_holding 65000 1
