@@ -1,301 +1,367 @@
 #include "main.h"
 #include "ethernet_jl1101.h"
-#include "esp_wifi.h"
+#include "driver/gpio.h"
+#include "esp_system.h"
+#include "esp_timer.h"
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
-AsyncWebServer webServer(80);
+static const char *TAG = "Main";
+
 Config config;
-Preferences prefs;
 PhaseSwitch phaseSwitch;
-#ifdef BOARD_DINGTIAN
-TelnetPrint debugOut;
-#endif
-WiFiManager wm(debugOut);
-static bool s_wifi_saved_in_portal = false;
+static volatile bool s_sta_connected_or_got_ip = false;
+static bool s_sta_ever_connected = false;
+static bool s_modbus_started = false;
+
+static uint32_t nowMs()
+{
+  return (uint32_t)(esp_timer_get_time() / 1000ULL);
+}
+
+static void sleepMs(uint32_t ms)
+{
+  vTaskDelay(pdMS_TO_TICKS(ms));
+}
 
 static void applyWifiConfig(Config &cfg)
 {
   auto hostname = cfg.getHostname();
   if (hostname.length() > 0) {
-    WiFi.setHostname(hostname.c_str());
+    wifiNativeSetHostname(hostname.c_str());
   }
   if (!cfg.getWifiDhcp()) {
-    IPAddress ip;
-    IPAddress gw;
-    IPAddress mask;
-    IPAddress dns1;
-    IPAddress dns2;
-    ip.fromString(cfg.getWifiIp());
-    gw.fromString(cfg.getWifiGw());
-    mask.fromString(cfg.getWifiMask());
-    dns1.fromString(cfg.getWifiDns1());
-    dns2.fromString(cfg.getWifiDns2());
-    WiFi.config(ip, gw, mask, dns1, dns2);
+    wifiNativeSetStaStatic(std::string(cfg.getWifiIp().c_str()),
+                           std::string(cfg.getWifiGw().c_str()),
+                           std::string(cfg.getWifiMask().c_str()),
+                           std::string(cfg.getWifiDns1().c_str()),
+                           std::string(cfg.getWifiDns2().c_str()));
   } else {
-    WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);
+    wifiNativeSetStaDhcp();
   }
-  WiFi.setAutoReconnect(true);
-  WiFi.persistent(true);
 }
 
 static void disableWifiForEthernet()
 {
-  wifi_mode_t mode = WIFI_MODE_NULL;
-  esp_err_t err = esp_wifi_get_mode(&mode);
-  if (err == ESP_ERR_WIFI_NOT_INIT) {
-    return;
-  }
-  if (err != ESP_OK) {
-    return;
-  }
-  if (mode != WIFI_MODE_NULL) {
-    esp_wifi_set_mode(WIFI_MODE_NULL);
-    esp_wifi_stop();
+  if (wifiNativeGetMode() != WIFI_MODE_NULL) {
+    wifiNativeDisable();
   }
 }
 
 static void enableWifiAfterEthernet(Config &cfg)
 {
-  WiFi.softAPdisconnect(true);
-  WiFi.enableAP(false);
-  WiFi.mode(WIFI_STA);
+  wifiNativeEnsureStaMode();
   applyWifiConfig(cfg);
-  WiFi.begin();
+  wifiNativeConnectSta();
+}
+
+static void forceStaOnlyMode(Config &cfg)
+{
+  wifi_mode_t mode = wifiNativeGetMode();
+  if (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA || mode == WIFI_MODE_NULL) {
+    wifiNativeEnsureStaMode();
+    applyWifiConfig(cfg);
+  }
 }
 
 static bool ethernetIsActive()
 {
-  // Some PHY/driver combinations report ETH_GOT_IP without a reliable LINK_UP event.
   return ethernetHasLink() || ethernetHasIp();
 }
 
-#ifdef BOARD_DINGTIAN
-static bool s_telnet_started = false;
-
-static void startTelnetIfWifiEnabled()
-{
-  if (!s_telnet_started && WiFi.getMode() != WIFI_OFF) {
-    debugOut.begin(23, false);
-    s_telnet_started = true;
-  }
-}
-#endif
-
 static void syncWifiCredsFlag(Config &cfg)
 {
-#ifdef ESP32
-  wifi_config_t wifi_cfg;
-  if (esp_wifi_get_config(WIFI_IF_STA, &wifi_cfg) == ESP_OK) {
-    if (wifi_cfg.sta.ssid[0] != '\0') {
-      cfg.setWifiCredsSet(true);
-    }
+  if (wifiNativeHasStoredStaSsid()) {
+    cfg.setWifiCredsSet(true);
   }
-#endif
+}
+
+static void prepareStaInterfaceAndSyncCreds(Config &cfg)
+{
+  wifiNativeEnsureStaMode();
+  applyWifiConfig(cfg);
+  syncWifiCredsFlag(cfg);
 }
 
 static bool hasSavedStaSsid()
 {
-#ifdef ESP32
-  wifi_config_t wifi_cfg = {};
-  if (esp_wifi_get_config(WIFI_IF_STA, &wifi_cfg) == ESP_OK) {
-    return wifi_cfg.sta.ssid[0] != '\0';
-  }
-#endif
-  return false;
+  return wifiNativeHasStoredStaSsid();
 }
 
-static void kickWifiDhcpIfConnectedWithoutIp()
+static bool hasConfiguredWifi(Config &cfg)
 {
-  if (WiFi.status() == WL_CONNECTED && WiFi.localIP() == IPAddress(0, 0, 0, 0)) {
-    dbgln("[wifi] connected without IP, restarting DHCP");
-    WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);
-    WiFi.disconnect(false, false);
-    delay(200);
-    WiFi.reconnect();
-  }
+  return hasSavedStaSsid() || cfg.getWifiCredsSet() || (wifiNativeStaConnectedSsid().length() > 0);
 }
 
-void setup() {
-#ifndef BOARD_DINGTIAN
-  debugOut.begin(115200);
-#endif
-  dbgln("[gpio] start");
-  phaseSwitch.begin();
-  dbgln("[gpio] finished");
-  dbgln("[config] load")
-  prefs.begin("hec_1p3p");
-  config.begin(&prefs);
-  phaseSwitch.setSwitchDelay(config.getSwitchDelay());
-
-#ifdef BOARD_DINGTIAN
-  setupEthernet();
-  if (config.getHostname().length() > 0) {
-    ethernetSetHostname(config.getHostname().c_str());
-  }
-  if (config.getEthDhcp()) {
-    ethernetConfigureDhcp();
-  } else {
-    IPAddress ip;
-    IPAddress gw;
-    IPAddress mask;
-    IPAddress dns1;
-    IPAddress dns2;
-    ip.fromString(config.getEthIp());
-    gw.fromString(config.getEthGw());
-    mask.fromString(config.getEthMask());
-    dns1.fromString(config.getEthDns1());
-    dns2.fromString(config.getEthDns2());
-    ethernetConfigureStatic(ip, gw, mask, dns1, dns2);
-  }
-  const uint32_t link_wait_ms = 5000;
-  const uint32_t link_start = millis();
-  while (!ethernetIsActive() && (millis() - link_start) < link_wait_ms) {
-    delay(100);
-  }
-  const bool eth_link = ethernetIsActive();
-  if (eth_link) {
-    (void)ethernetWaitForIp(30000);
-  }
-  const bool eth_ok = eth_link;
-#endif
-  
-#ifdef BOARD_DINGTIAN
-  if (!eth_ok) {
-    startTelnetIfWifiEnabled();
-  }
-#endif
-  wm.setDebugOutput(false);
-
-  pinMode(PIN_FACTORY_LED, OUTPUT);
-  digitalWrite(PIN_FACTORY_LED, LOW);
-
-  wm.setClass("invert");
-  wm.setSaveConfigCallback([&](){
-    config.setWifiCredsSet(true);
-    s_wifi_saved_in_portal = true;
-  });
-#ifdef BOARD_DINGTIAN
-  if (!eth_ok) {
-    dbgln("[wifi] start");
-    WiFi.mode(WIFI_STA);
-    applyWifiConfig(config);
-    syncWifiCredsFlag(config);
-    wm.autoConnect();
-    kickWifiDhcpIfConnectedWithoutIp();
-  } else {
-    disableWifiForEthernet();
-  }
-#else
-  dbgln("[wifi] start");
-  WiFi.mode(WIFI_STA);
-  applyWifiConfig(config);
-  syncWifiCredsFlag(config);
-  wm.autoConnect();
-  kickWifiDhcpIfConnectedWithoutIp();
-#endif
-  MBUlogLvl = LOG_LEVEL_WARNING;
-  LOGDEVICE = &debugOut;
-  dbgln("[wifi] finished");
-  dbgln("[modbus] start");
-  if (config.getModbusEnabled()) {
-    phaseSwitch.beginModbus();
-    dbgln("[modbus] finished");
-  } else {
-    dbgln("[modbus] disabled in config");
-  }
-  setupPages(&webServer, &phaseSwitch, &config, &wm);
-  webServer.begin();
-  dbgln("[setup] finished");
+static bool shouldStartSetupAp(Config &cfg)
+{
+  return !hasConfiguredWifi(cfg) && !s_sta_ever_connected;
 }
 
-void loop() {
-  uptime::calculateUptime();
-#ifdef BOARD_DINGTIAN
-  debugOut.loop();
-  static bool wifi_disabled_by_eth = false;
-  static bool wifi_portal_triggered = false;
-  static bool wifi_state_initialized = false;
+static bool isStaModeActive()
+{
+  wifi_mode_t mode = wifiNativeGetMode();
+  return mode == WIFI_MODE_STA || mode == WIFI_MODE_APSTA;
+}
 
-  if (!wifi_state_initialized) {
-    // If we boot with Ethernet active and WiFi already off, remember that
-    // WiFi was intentionally suppressed by Ethernet policy.
-    if (ethernetIsActive() && WiFi.getMode() == WIFI_OFF) {
-      wifi_disabled_by_eth = true;
-    }
-    wifi_state_initialized = true;
+static bool shouldStartModbusNow(Config &cfg)
+{
+  if (!cfg.getModbusEnabled()) {
+    return false;
   }
-
+#ifdef BOARD_DINGTIAN
   if (ethernetIsActive()) {
-    wifi_portal_triggered = false;
-    if (!wifi_disabled_by_eth && WiFi.getMode() != WIFI_OFF) {
-      dbgln("[wifi] disabled due to ethernet");
-      disableWifiForEthernet();
-      wifi_disabled_by_eth = true;
-    }
-  } else {
-    if (wifi_disabled_by_eth) {
-      dbgln("[wifi] ethernet down, re-enabling wifi");
-      if (hasSavedStaSsid()) {
-        enableWifiAfterEthernet(config);
-        WiFi.reconnect();
-      } else if (!wifi_portal_triggered) {
-        dbgln("[wifi] no saved credentials, starting config portal");
-        webServer.end();
-        WiFi.mode(WIFI_STA);
-        applyWifiConfig(config);
-        wm.setConfigPortalBlocking(true);
-        s_wifi_saved_in_portal = false;
-        (void)wm.startConfigPortal();
-        wm.stopWebPortal();
-        wm.stopConfigPortal();
-        if (s_wifi_saved_in_portal) {
-          dbgln("[wifi] portal finished, rebooting");
-          delay(500);
-          ESP.restart();
-        }
-        wifi_portal_triggered = s_wifi_saved_in_portal;
-      }
-      startTelnetIfWifiEnabled();
-      wifi_disabled_by_eth = false;
-    }
+    return true;
   }
 #endif
-  static uint32_t wifi_no_ip_since = 0;
-  static uint32_t wifi_reconnect_since = 0;
-  if (WiFi.getMode() != WIFI_OFF) {
-    if (WiFi.status() == WL_CONNECTED && WiFi.localIP() == IPAddress(0, 0, 0, 0)) {
-      if (wifi_no_ip_since == 0) {
-        wifi_no_ip_since = millis();
-      } else if (millis() - wifi_no_ip_since > 10000) {
-        dbgln("[wifi] no IP, restarting DHCP");
-        WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);
-        WiFi.disconnect(false, false);
-        WiFi.reconnect();
-        wifi_no_ip_since = 0;
-      }
+  return wifiNativeIsStaConnected();
+}
+
+static bool shouldEnableTelnetNow(Config &cfg)
+{
+  return cfg.getModbusEnabled() && cfg.getTelnetEnabled();
+}
+
+static void startWifiSetupAccessPoint(Config &cfg)
+{
+  std::string apName = cfg.getHostname();
+  if (apName.empty()) {
+    apName = "heidelberg-1p3p";
+  }
+  apName += "-setup";
+  wifiNativeStartAp(apName);
+}
+
+static void wifiEventHandler(void *, esp_event_base_t eventBase, int32_t eventId, void *)
+{
+  if ((eventBase == WIFI_EVENT && eventId == WIFI_EVENT_STA_CONNECTED) ||
+      (eventBase == IP_EVENT && eventId == IP_EVENT_STA_GOT_IP)) {
+    s_sta_connected_or_got_ip = true;
+    s_sta_ever_connected = true;
+  }
+}
+
+static void main_task(void *pvParameters)
+{
+    ESP_LOGI(TAG, "Starting system initialization...");
+    
+    wifiNativeInit();
+    ESP_LOGI(TAG, "gpio start");
+    phaseSwitch.begin();
+    
+    debugSetTelnetEnabled(shouldEnableTelnetNow(config));
+    
+    if (config.getWifiResetPending()) {
+        ESP_LOGI(TAG, "pending reset: clearing stored wifi credentials");
+        config.setWifiResetPending(false);
+        config.setWifiCredsSet(false);
+        wifiNativeEnsureStaMode();
+        sleepMs(50);
+        esp_wifi_restore();
+        wifiNativeDisconnectSta(false);
+        wifiNativeDisable();
+        sleepMs(50);
+    }
+    
+    phaseSwitch.setSwitchDelay(config.getSwitchDelay());
+
+    bool eth_ok = false;
+#ifdef BOARD_DINGTIAN
+    setupEthernet();
+    if (config.getHostname().length() > 0) {
+        ethernetSetHostname(config.getHostname().c_str());
+    }
+    if (config.getEthDhcp()) {
+        ethernetConfigureDhcp();
     } else {
-      wifi_no_ip_since = 0;
+        ethernetConfigureStatic(config.getEthIp().c_str(),
+                                config.getEthGw().c_str(),
+                                config.getEthMask().c_str(),
+                                config.getEthDns1().c_str(),
+                                config.getEthDns2().c_str());
+    }
+    
+    const uint32_t link_wait_ms = 5000;
+    const uint32_t link_start = nowMs();
+    while (!ethernetIsActive() && (nowMs() - link_start) < link_wait_ms) {
+        sleepMs(100);
+    }
+    
+    eth_ok = ethernetIsActive();
+    if (eth_ok) {
+        (void)ethernetWaitForIp(30000);
+    }
+#endif
+
+    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifiEventHandler, nullptr);
+    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifiEventHandler, nullptr);
+
+    gpio_reset_pin((gpio_num_t)PIN_FACTORY_LED);
+    gpio_set_direction((gpio_num_t)PIN_FACTORY_LED, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)PIN_FACTORY_LED, 0);
+
+#ifdef BOARD_DINGTIAN
+    if (!eth_ok) {
+        ESP_LOGI(TAG, "wifi start");
+        prepareStaInterfaceAndSyncCreds(config);
+        if (hasConfiguredWifi(config)) {
+            wifiNativeConnectSta();
+            forceStaOnlyMode(config);
+        } else if (shouldStartSetupAp(config)) {
+            startWifiSetupAccessPoint(config);
+        } else {
+            wifiNativeConnectSta();
+        }
+    } else {
+        disableWifiForEthernet();
+    }
+#else
+    ESP_LOGI(TAG, "wifi start");
+    prepareStaInterfaceAndSyncCreds(config);
+    if (hasConfiguredWifi(config)) {
+        wifiNativeConnectSta();
+        forceStaOnlyMode(config);
+    } else if (shouldStartSetupAp(config)) {
+        startWifiSetupAccessPoint(config);
+    } else {
+        wifiNativeConnectSta();
+    }
+#endif
+
+    if (shouldStartModbusNow(config)) {
+        ESP_LOGI(TAG, "modbus start");
+        phaseSwitch.beginModbus();
+        s_modbus_started = true;
     }
 
-    if (WiFi.status() != WL_CONNECTED) {
-      if (!hasSavedStaSsid()) {
-        wifi_reconnect_since = 0;
-      } else {
-        if (wifi_reconnect_since == 0) {
-          wifi_reconnect_since = millis();
-        } else if (millis() - wifi_reconnect_since > 15000) {
-          dbgln("[wifi] not connected, retrying");
-          applyWifiConfig(config);
-          WiFi.reconnect();
-          wifi_reconnect_since = 0;
+    setupPages(&phaseSwitch, &config);
+    ESP_LOGI(TAG, "Setup finished. Starting main loop.");
+
+    while (1) {
+        debugSetTelnetEnabled(shouldEnableTelnetNow(config));
+        uptime::calculateUptime();
+        
+        if (s_sta_connected_or_got_ip) {
+            config.setWifiCredsSet(true);
+            s_sta_ever_connected = true;
+            s_sta_connected_or_got_ip = false;
         }
-      }
-    } else {
-      wifi_reconnect_since = 0;
+
+#ifdef BOARD_DINGTIAN
+        debugLoop();
+        static bool wifi_disabled_by_eth = false;
+        static bool wifi_state_initialized = false;
+        static uint32_t eth_inactive_since = 0;
+        static uint32_t wifi_reenable_after = 0;
+
+        if (!wifi_state_initialized) {
+            if (ethernetIsActive() && wifiNativeGetMode() == WIFI_MODE_NULL) {
+                wifi_disabled_by_eth = true;
+            }
+            wifi_state_initialized = true;
+        }
+
+        const bool eth_active = ethernetIsActive();
+
+        if (eth_active) {
+            eth_inactive_since = 0;
+            if (wifiNativeGetMode() != WIFI_MODE_NULL) {
+                ESP_LOGI(TAG, "wifi disabled due to ethernet");
+                disableWifiForEthernet();
+                wifi_disabled_by_eth = true;
+                wifi_reenable_after = nowMs() + 5000;
+            }
+        } else {
+            if (eth_inactive_since == 0) {
+                eth_inactive_since = nowMs();
+            }
+            if ((nowMs() - eth_inactive_since) < 5000) {
+                sleepMs(10);
+                phaseSwitch.loop();
+                continue;
+            }
+            if (wifi_reenable_after != 0 && nowMs() < wifi_reenable_after) {
+                sleepMs(10);
+                phaseSwitch.loop();
+                continue;
+            }
+            if (wifi_disabled_by_eth) {
+                ESP_LOGI(TAG, "ethernet down, re-enabling wifi");
+                prepareStaInterfaceAndSyncCreds(config);
+                enableWifiAfterEthernet(config);
+                wifi_disabled_by_eth = false;
+                wifi_reenable_after = 0;
+            }
+            if (hasConfiguredWifi(config)) {
+                forceStaOnlyMode(config);
+            }
+        }
+#endif
+
+        if (!s_modbus_started && shouldStartModbusNow(config)) {
+            ESP_LOGI(TAG, "starting modbus after network ready");
+            phaseSwitch.beginModbus();
+            s_modbus_started = true;
+        }
+
+        static uint32_t last_heartbeat = 0;
+        if (nowMs() - last_heartbeat > 10000) {
+            ESP_LOGI(TAG, "System Heartbeat - Uptime: %u s, RAM: %u bytes", 
+                     (unsigned int)(esp_timer_get_time() / 1000000ULL),
+                     (unsigned int)esp_get_free_heap_size());
+            last_heartbeat = nowMs();
+        }
+
+        static uint32_t wifi_no_ip_since = 0;
+        static uint32_t wifi_reconnect_since = 0;
+        if (isStaModeActive()) {
+            if (wifiNativeIsStaConnected() && !wifiNativeIsStaGotIp()) {
+                if (wifi_no_ip_since == 0) {
+                    wifi_no_ip_since = nowMs();
+                } else if (nowMs() - wifi_no_ip_since > 3000) {
+                    ESP_LOGI(TAG, "no IP, restarting DHCP");
+                    wifiNativeReconnectSta();
+                    wifi_no_ip_since = 0;
+                }
+            } else {
+                wifi_no_ip_since = 0;
+            }
+
+            if (!wifiNativeIsStaConnected()) {
+                if (hasSavedStaSsid()) {
+                    if (wifi_reconnect_since == 0) {
+                        wifi_reconnect_since = nowMs();
+                    } else if (nowMs() - wifi_reconnect_since > 15000) {
+                        ESP_LOGI(TAG, "not connected, retrying");
+                        applyWifiConfig(config);
+                        wifiNativeReconnectSta();
+                        wifi_reconnect_since = 0;
+                    }
+                }
+            } else {
+                wifi_reconnect_since = 0;
+            }
+        } else {
+            wifi_no_ip_since = 0;
+            wifi_reconnect_since = 0;
+        }
+
+        phaseSwitch.loop();
+        sleepMs(10);
     }
-  } else {
-    wifi_no_ip_since = 0;
-    wifi_reconnect_since = 0;
-  }
-  delay(1);
-  phaseSwitch.loop();
+}
+
+extern "C" void app_main(void)
+{
+    debugInit();
+    
+    ESP_LOGI(TAG, "Config load...");
+    config.begin();
+    
+    // Create the system startup and main task.
+    // Stack size increased to 12k for safety.
+    xTaskCreate(main_task, "main_task", 12288, nullptr, 5, nullptr);
+    
+    ESP_LOGI(TAG, "app_main returned. Initialization continuing in main_task.");
 }
