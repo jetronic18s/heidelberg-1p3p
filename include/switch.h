@@ -1,8 +1,12 @@
 #ifndef SWITCH_H
     #define SWITCH_H
-    #include <Arduino.h>
-    #include <ModbusBridgeWiFi.h>
-    #include <ModbusClientRTU.h>
+    #include <cstddef>
+    #include <cstdint>
+    #include <string>
+    #include <vector>
+    #include "freertos/FreeRTOS.h"
+    #include "freertos/task.h"
+    #include <mbcontroller.h>
     #include "config.h"
     #include "debug.h"
 
@@ -28,12 +32,13 @@
         //confirmed phases -> Wait for Delay,
         Delay,
         //delay passed -> Running
+        Fault,
     };
 
     class PhaseSwitch{
         private:
-            unsigned long _previous;
-            unsigned long _delay;
+            uint32_t _previous;
+            uint32_t _delay;
             State _state;
             uint8_t _desiredPhases;
             bool _switchingSupported;
@@ -44,19 +49,43 @@
             bool validateSetup();
             uint8_t getActivePhases();
             //modbus
-            ModbusClientRTU _client;
-            ModbusBridgeWiFi _bridge;
+            void* _master_handle;
+            TaskHandle_t _tcpTaskHandle;
             uint8_t _serverId;
-            MBSworker _bridgeWorker;
-            ModbusMessage onWriteHolding(ModbusMessage msg);
-            ModbusMessage bridgeCall(ModbusMessage msg);
-            ModbusMessage cacheWriteHolding(ModbusMessage msg);
-            ModbusMessage onWriteMultiple(ModbusMessage msg);
-            ModbusMessage cacheWriteMultiple(ModbusMessage msg);
-            ModbusMessage onReadHolding(ModbusMessage msg);
-            ModbusMessage cacheReadHolding(ModbusMessage msg);
-            ModbusMessage onReadInput(ModbusMessage msg);
-            ModbusMessage cacheReadInput(ModbusMessage msg);
+            int _listenFd;
+            bool _tcpServerStarted;
+            uint32_t _rtuMessageCount;
+            uint32_t _rtuPendingRequestCount;
+            uint32_t _rtuErrorCount;
+            uint32_t _bridgeMessageCount;
+            uint32_t _bridgeActiveClientCount;
+            uint32_t _bridgeErrorCount;
+            uint16_t _safetyFaultCode;
+            std::string _safetyFaultText;
+            uint32_t _switchOnDeadlineMs;
+            void enterSafetyFault(uint16_t code, const char *text);
+            bool hasSafetyFault();
+            
+            // Native Modbus helpers
+            esp_err_t masterReadInput(uint16_t addr, uint16_t count, uint16_t* dest);
+            esp_err_t masterReadHolding(uint16_t addr, uint16_t count, uint16_t* dest);
+            esp_err_t masterWriteHolding(uint16_t addr, uint16_t value);
+            esp_err_t masterWriteMultipleHolding(uint16_t addr, uint16_t count, const uint16_t* values);
+            void startTcpBridge();
+            void tcpBridgeTask();
+            void handleTcpClient(int clientFd);
+            bool handleModbusRequest(uint8_t unitId, const uint8_t* pdu, size_t pduLen, std::vector<uint8_t>& responsePdu);
+            bool handleReadHolding(uint8_t unitId, uint16_t addr, uint16_t count, std::vector<uint8_t>& responsePdu);
+            bool handleReadInput(uint8_t unitId, uint16_t addr, uint16_t count, std::vector<uint8_t>& responsePdu);
+            bool handleWriteHolding(uint8_t unitId, uint16_t addr, uint16_t value, std::vector<uint8_t>& responsePdu);
+            bool handleWriteMultiple(uint8_t unitId, uint16_t addr, uint16_t count, const uint16_t* values, std::vector<uint8_t>& responsePdu);
+            void buildException(uint8_t functionCode, uint8_t exceptionCode, std::vector<uint8_t>& responsePdu);
+            void buildReadResponse(uint8_t functionCode, const uint16_t* values, uint16_t count, std::vector<uint8_t>& responsePdu);
+            void cacheHolding(uint16_t addr, const uint16_t* values, uint16_t count);
+            void cacheInput(uint16_t addr, const uint16_t* values, uint16_t count);
+            bool readCachedHolding(uint16_t addr, uint16_t count, std::vector<uint16_t>& values);
+            bool readCachedInput(uint16_t addr, uint16_t count, std::vector<uint16_t>& values);
+            
         public:
             PhaseSwitch();
             void begin();
@@ -66,15 +95,16 @@
             void switchTo3P();
             bool canSwitchTo1P();
             bool canSwitchTo3P();
-            void setSwitchDelay(uint32_t millis);
+            void setSwitchDelay(uint32_t delayMs);
             uint32_t getRtuMessageCount();
             uint32_t getRtuPendingRequestCount();
             uint32_t getRtuErrorCount();
             uint32_t getBridgeMessageCount();
             uint32_t getBridgeActiveClientCount();
             uint32_t getBridgeErrorCount();
-            ModbusMessage sendRtuRequest(uint8_t serverID, uint8_t functionCode, uint16_t p1, uint16_t p2);
-            const String getState();
+            std::string getState();
+            uint16_t getSafetyFaultCode();
+            std::string getSafetyFaultText();
             uint16_t getHoldingRegister(size_t reg);
             uint16_t getInputRegister(size_t reg);
             bool updateCachedRegisters();
