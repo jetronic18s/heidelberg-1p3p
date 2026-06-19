@@ -1,46 +1,10 @@
 
-This directory is intended for project specific (private) libraries.
-PlatformIO will compile them to static libraries and link into executable file.
+This directory contains local project libraries.
 
-The source code of each library should be placed in a an own separate directory
-("lib/your_library_name/[here are source files]").
+For this project (ESP-IDF only), prefer one of these options:
 
-For example, see a structure of the following two libraries `Foo` and `Bar`:
+1. Keep reusable code as ESP-IDF components under `components/`.
+2. Keep board-/project-specific code under `src/` and `include/`.
 
-|--lib
-|  |
-|  |--Bar
-|  |  |--docs
-|  |  |--examples
-|  |  |--src
-|  |     |- Bar.c
-|  |     |- Bar.h
-|  |  |- library.json (optional, custom build options, etc) https://docs.platformio.org/page/librarymanager/config.html
-|  |
-|  |--Foo
-|  |  |- Foo.c
-|  |  |- Foo.h
-|  |
-|  |- README --> THIS FILE
-|
-|- platformio.ini
-|--src
-   |- main.c
-
-and a contents of `src/main.c`:
-```
-#include <Foo.h>
-#include <Bar.h>
-
-int main (void)
-{
-  ...
-}
-
-```
-
-PlatformIO Library Dependency Finder will find automatically dependent
-libraries scanning project source files.
-
-More information about PlatformIO Library Dependency Finder
-- https://docs.platformio.org/page/librarymanager/ldf.html
+If you add custom libraries here, ensure they are integrated through the
+ESP-IDF CMake build (directly or via a component CMake file).
