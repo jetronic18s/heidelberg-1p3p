@@ -26,7 +26,7 @@ void setupPages(AsyncWebServer *server, PhaseSwitch *phaseSwitch, Config *config
     sendResponseTrailer(response);
     request->send(response);
   });
-  server->on("/status", HTTP_GET, [phaseSwitch](AsyncWebServerRequest *request){
+  server->on("/status", HTTP_GET, [phaseSwitch, config](AsyncWebServerRequest *request){
     dbgln("[webserver] GET /status");
     auto *response = request->beginResponseStream("text/html");
     sendResponseHeader(response, "Status");
@@ -77,10 +77,14 @@ void setupPages(AsyncWebServer *server, PhaseSwitch *phaseSwitch, Config *config
     sendTableRow(response, "Build time", __DATE__ " " __TIME__);
     sendTableRow(response, "Uptime", Uptime());
     response->print("</table><p></p>");
-    response->print("<form method=\"post\">"
-      "<button class=\"r\">Update register</button>"
-      "</form>"
-      "<p></p>");
+    if (config->getModbusEnabled()){
+      response->print("<form method=\"post\">"
+        "<button class=\"r\">Update register</button>"
+        "</form>"
+        "<p></p>");
+    } else {
+      response->print("<p class=\"e\">Modbus disabled in config; register update not available.</p>");
+    }
     sendButton(response, "Back", "/");
     sendResponseTrailer(response);
     request->send(response);
@@ -166,6 +170,10 @@ void setupPages(AsyncWebServer *server, PhaseSwitch *phaseSwitch, Config *config
                      config->getEthDns2().c_str());
 #endif
     response->print("</table>");
+    response->print("<p></p>");
+    response->print("<label><input type=\"checkbox\" name=\"modbus\" value=\"1\" ");
+    response->print(config->getModbusEnabled() ? "checked" : "");
+    response->print("> Modbus/RS485 aktiv</label>");
     response->print("<p style=\"font-size:0.9em;opacity:0.8;\">"
                     "Hinweis: Statische IP-Einstellungen werden nach einem Reboot zuverlässig aktiv."
                     "</p>");
@@ -256,6 +264,8 @@ void setupPages(AsyncWebServer *server, PhaseSwitch *phaseSwitch, Config *config
       ethernetConfigureStatic(ip, gw, mask, dns1, dns2);
     }
 #endif
+    bool modbusEnabled = request->hasParam("modbus", true);
+    config->setModbusEnabled(modbusEnabled);
     request->redirect("/");
   });
   server->on("/1p", HTTP_POST, [phaseSwitch](AsyncWebServerRequest *request){
