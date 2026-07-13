@@ -1,0 +1,19 @@
+# Standard IDF config
+CONFIG_FREERTOS_HZ=1000
+
+# Use the project's OTA partition table.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_two_ota.csv"
+
+# Board uses 4MB flash.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+# Increase main task stack size
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Increase system event task stack size
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=8192
+
+# Keep Modbus TCP bridge responsive when the RTU wallbox is absent or slow.
+CONFIG_FMB_MASTER_TIMEOUT_MS_RESPOND=500

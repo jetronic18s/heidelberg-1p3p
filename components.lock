@@ -1,0 +1,5 @@
+# Component lockfile for ESP-IDF build
+# Format: name | url | commit | tree
+
+joltwallet__littlefs | https://github.com/joltwallet/esp_littlefs.git | 92ac3c2dce8c62c4b47bdb33e8461a4670411475 | 0626777cbbe716ebea88e277f3a93acaa73ee9ec
+littlefs | https://github.com/littlefs-project/littlefs.git | adad0fbbcf5382c20978d07f94f9c13be9041c1b | bc0861eb72ed11924918ec2172b5655da7066218
