@@ -5,6 +5,7 @@ set(IDF_COMPONENT_MANAGER 1)
 
 set(EXTRA_COMPONENT_DIRS
     "${CMAKE_SOURCE_DIR}/components"
+    "${CMAKE_SOURCE_DIR}/lib/eth_phy_jl1101"
 )
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

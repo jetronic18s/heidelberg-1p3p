@@ -38,22 +38,6 @@ fetch_repo() {
   fi
 }
 
-ensure_local_eth_phy_component() {
-  local dst="${COMP_DIR}/eth_phy_jl1101"
-  mkdir -p "${dst}/src" "${dst}/include"
-
-  cp -f "${ROOT_DIR}/lib/eth_phy_jl1101/src/esp_eth_phy_jl1101.c" "${dst}/src/esp_eth_phy_jl1101.c"
-  cp -f "${ROOT_DIR}/lib/eth_phy_jl1101/include/esp_eth_phy_jl1101.h" "${dst}/include/esp_eth_phy_jl1101.h"
-
-  cat > "${dst}/CMakeLists.txt" <<'EOF'
-idf_component_register(
-  SRCS "src/esp_eth_phy_jl1101.c"
-  INCLUDE_DIRS "include"
-  REQUIRES esp_eth esp_driver_gpio
-)
-EOF
-}
-
 while IFS='|' read -r name url commit tree; do
   name="${name// /}"
   url="${url// /}"
@@ -78,7 +62,5 @@ if [[ -n "${LITTLEFS_COMMIT}" ]]; then
   fetch_repo "littlefs" "https://github.com/littlefs-project/littlefs.git" "${LITTLEFS_COMMIT}" "" \
     "${COMP_DIR}/joltwallet__littlefs/src/littlefs"
 fi
-
-ensure_local_eth_phy_component
 
 echo "Done."
