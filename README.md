@@ -44,6 +44,26 @@ Der Dingtian DT-R002 (DEV) hat einen JL1101 PHY (RTL8201F kompatibel) und einen 
 - `idf.py set-target esp32`
 - `idf.py -p /dev/ttyUSB0 flash monitor`
 - Details: siehe `README_IDF.md`.
+- Optional vor dem Flashen komplett löschen (inkl. NVS/WLAN-Credentials):
+  - `idf.py -p /dev/ttyUSB0 erase-flash`
+- Empfohlener sauberer Rebuild (bei Migrations-/Component-Problemen):
+  - `rm -rf build components managed_components dependencies.lock`
+  - `./scripts/fetch_components.sh`
+  - `. ~/esp-idf/export.sh`
+  - `idf.py build`
+  - `./scripts/flash.sh /dev/ttyUSB0`
+- Nach dem Boot im Log prüfen, dass die erwartete `App version` läuft (kurzer Commit-Hash).
+
+### Checkliste (IDF-only)
+
+Schneller Ablauf pro Firmware-Stand:
+
+1. Build-Smoketest:
+   - `./scripts/smoke_test.sh`
+2. Optional Flash + kurzer Monitor:
+   - `./scripts/smoke_test.sh --port /dev/ttyUSB0 --monitor-seconds 20`
+3. Optional Modbus-Read-Checks gegen laufendes Gerät:
+   - `./scripts/smoke_test.sh --host <IP_DER_BOX>`
 
 ### Statusanzeige
 
@@ -60,11 +80,28 @@ Unter **Config** kann ein Hostname gesetzt werden. Dieser wird sowohl für WLAN 
 ### WLAN bei aktivem LAN
 
 Wenn Ethernet Link + IP hat, wird WLAN automatisch deaktiviert. Fällt Ethernet weg, wird WLAN wieder aktiviert.
-Wenn kein WLAN eingerichtet ist und LAN wegfällt, startet der ESP nach einem Reboot das WLAN‑Konfigurationsportal (Access Point), damit die Ersteinrichtung möglich ist.
+Wenn kein WLAN eingerichtet ist und LAN wegfällt, startet direkt das WLAN‑Konfigurationsportal unter `http://192.168.4.1`.
+Nach erfolgreichem Speichern der WLAN‑Daten führt das Gerät einen automatischen Reboot aus und verbindet sich danach per STA mit dem konfigurierten WLAN.
+
+Kurztest für stabilen Handover:
+- Start mit eingestecktem LAN: WLAN muss aus bleiben.
+- LAN abziehen: WLAN STA (oder Setup-AP ohne Credentials) muss starten.
+- LAN wieder einstecken: WLAN muss sauber stoppen (`wifi:mode : null`).
+- Mehrfach wiederholen, auch mit kurzem LAN-Flattern.
 
 ### Modbus aktivieren/deaktivieren
 
 Unter **Config** kann Modbus komplett deaktiviert werden. In diesem Fall wird im Status keine Register‑Aktualisierung angeboten.
+
+### Telnet-Debug (bei aktivem Modbus)
+
+Wenn Modbus/RS485 aktiv ist, kann unter **Config** zusaetzlich **Telnet-Debug aktiv (Port 23)** eingeschaltet werden.
+Damit werden die Debug-Logs parallel zur seriellen Konsole ueber Telnet ausgegeben:
+
+- `telnet <IP_DER_BOX> 23`
+- alternativ: `nc <IP_DER_BOX> 23`
+
+Bei deaktiviertem Modbus wird Telnet-Debug automatisch deaktiviert.
 
 ## Darf ich das?
 
