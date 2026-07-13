@@ -48,7 +48,9 @@
             String _wifiMask;
             String _wifiDns1;
             String _wifiDns2;
+            bool _wifiCredsSet;
             bool _modbusEnabled;
+            String _hostname;
         public:
             Config();
             void begin(Preferences *prefs);
@@ -78,8 +80,13 @@
             void setWifiDns1(String value);
             String getWifiDns2();
             void setWifiDns2(String value);
+            bool getWifiCredsSet();
+            void setWifiCredsSet(bool value);
             bool getModbusEnabled();
             void setModbusEnabled(bool value);
+            String getHostname();
+            void setHostname(String value);
+            static bool isHostnameValid(const String &value);
     };
 
 #endif /* CONFIG_H */

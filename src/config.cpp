@@ -1,4 +1,45 @@
 #include "config.h"
+#include <ctype.h>
+
+static String sanitizeHostname(const String &value)
+{
+    String trimmed = value;
+    trimmed.trim();
+    String out;
+    out.reserve(32);
+    for (size_t i = 0; i < trimmed.length() && out.length() < 32; i++) {
+        char c = trimmed[i];
+        if (isalnum(static_cast<unsigned char>(c)) || c == '-') {
+            out += c;
+        }
+    }
+    while (out.length() > 0 && out[0] == '-') {
+        out.remove(0, 1);
+    }
+    while (out.length() > 0 && out[out.length() - 1] == '-') {
+        out.remove(out.length() - 1, 1);
+    }
+    return out;
+}
+
+bool Config::isHostnameValid(const String &value)
+{
+    String trimmed = value;
+    trimmed.trim();
+    if (trimmed.length() == 0 || trimmed.length() > 32) {
+        return false;
+    }
+    if (trimmed[0] == '-' || trimmed[trimmed.length() - 1] == '-') {
+        return false;
+    }
+    for (size_t i = 0; i < trimmed.length(); i++) {
+        char c = trimmed[i];
+        if (!(isalnum(static_cast<unsigned char>(c)) || c == '-')) {
+            return false;
+        }
+    }
+    return true;
+}
 
 Config::Config()
     :_prefs(NULL)
@@ -15,7 +56,9 @@ Config::Config()
     ,_wifiMask("255.255.255.0")
     ,_wifiDns1("192.168.178.1")
     ,_wifiDns2("")
+    ,_wifiCredsSet(false)
     ,_modbusEnabled(true)
+    ,_hostname("heidelberg-1p3p")
 {}
 
 void Config::begin(Preferences *prefs)
@@ -34,7 +77,19 @@ void Config::begin(Preferences *prefs)
     if (_prefs->isKey("wifiMask")) _wifiMask = _prefs->getString("wifiMask", _wifiMask);
     if (_prefs->isKey("wifiDns1")) _wifiDns1 = _prefs->getString("wifiDns1", _wifiDns1);
     if (_prefs->isKey("wifiDns2")) _wifiDns2 = _prefs->getString("wifiDns2", _wifiDns2);
+    if (_prefs->isKey("wifiCredsSet")) _wifiCredsSet = _prefs->getBool("wifiCredsSet", _wifiCredsSet);
     if (_prefs->isKey("modbusEnabled")) _modbusEnabled = _prefs->getBool("modbusEnabled", _modbusEnabled);
+    if (_prefs->isKey("hostname")) {
+        String stored = _prefs->getString("hostname", _hostname);
+        if (isHostnameValid(stored)) {
+            _hostname = stored;
+        } else {
+            String sanitized = sanitizeHostname(stored);
+            if (isHostnameValid(sanitized)) {
+                _hostname = sanitized;
+            }
+        }
+    }
 }
 
 uint32_t Config::getSwitchDelay(){
@@ -167,6 +222,16 @@ void Config::setWifiDns2(String value){
     _prefs->putString("wifiDns2", _wifiDns2);
 }
 
+bool Config::getWifiCredsSet(){
+    return _wifiCredsSet;
+}
+
+void Config::setWifiCredsSet(bool value){
+    if (_wifiCredsSet == value) return;
+    _wifiCredsSet = value;
+    _prefs->putBool("wifiCredsSet", _wifiCredsSet);
+}
+
 bool Config::getModbusEnabled(){
     return _modbusEnabled;
 }
@@ -175,4 +240,16 @@ void Config::setModbusEnabled(bool value){
     if (_modbusEnabled == value) return;
     _modbusEnabled = value;
     _prefs->putBool("modbusEnabled", _modbusEnabled);
+}
+
+String Config::getHostname(){
+    return _hostname;
+}
+
+void Config::setHostname(String value){
+    if (!isHostnameValid(value)) return;
+    String sanitized = sanitizeHostname(value);
+    if (_hostname == sanitized) return;
+    _hostname = sanitized;
+    _prefs->putString("hostname", _hostname);
 }
