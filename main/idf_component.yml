@@ -1,3 +1,3 @@
 dependencies:
   idf: ">=5.0"
-  espressif/esp-modbus: "*"
+  espressif/esp-modbus: "2.1.3"

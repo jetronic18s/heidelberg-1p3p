@@ -6,26 +6,15 @@ This repository uses an ESP-IDF-only build flow.
 
 - Repository root contains the ESP-IDF project (CMake, `sdkconfig.defaults`, `main/` component).
 - Existing sources remain in `src/` and `include/`.
-- External Arduino/libs should be placed under `components/`.
+- Local project components live under `main/` and `lib/`.
 
-## Required Components
+## Dependencies
 
-Fetch the required components into `components/`:
+No repository-managed component fetch step is required. ESP-IDF resolves managed
+components from `main/idf_component.yml` during configure/build.
 
-```
-./scripts/fetch_components.sh
-```
-
-`components.lock` pins both the commit and the tree hash to ensure reproducible checkouts.
-Use `./scripts/fetch_components.sh --no-verify` to skip tree hash verification.
-
-The following libraries are expected as ESP-IDF components in `components/`:
-
-- `arduino` (arduino-esp32 core, as an ESP-IDF component; pinned to 3.3.5)
-- `eModbus` (pinned to ed343224...)
-- `Uptime` (Uptime Library)
-
-Each component must include its own `CMakeLists.txt` (or be adapted to one).
+- `espressif/esp-modbus` is managed by the ESP-IDF Component Manager.
+- `lib/eth_phy_jl1101` is included directly as a local ESP-IDF component.
 
 ## Build
 
@@ -33,7 +22,6 @@ From the repository root:
 
 ```
 . ~/esp-idf/export.sh
-./scripts/fetch_components.sh
 idf.py set-target esp32
 idf.py build
 ```
@@ -95,7 +83,7 @@ Optional examples:
 
 Notes:
 - Modbus checks require `mbpoll` in `PATH`.
-- Use `--skip-fetch`/`--skip-build` for quicker reruns.
+- Use `--skip-build` for quicker reruns.
 
 ## Modbus Regression And Stress Tests
 

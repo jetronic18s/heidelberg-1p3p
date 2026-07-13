@@ -33,22 +33,20 @@ Der Dingtian DT-R002 (DEV) hat einen JL1101 PHY (RTL8201F kompatibel) und einen 
 ### Aktivierung
 
 - Build-Target: ESP-IDF (Repo-Root)
-- Framework: Arduino als ESP-IDF-Component
+- Framework: native ESP-IDF
 
 ### Build (ESP-IDF 5.5.4)
 
 - Empfohlener Standard-Workflow:
 - Für ESP-IDF `5.5.4` direkt im Repo-Root bauen:
 - `. ~/esp-idf/export.sh`
-- `./scripts/fetch_components.sh`
 - `idf.py set-target esp32`
 - `idf.py -p /dev/ttyUSB0 flash monitor`
 - Details: siehe `README_IDF.md`.
 - Optional vor dem Flashen komplett löschen (inkl. NVS/WLAN-Credentials):
   - `idf.py -p /dev/ttyUSB0 erase-flash`
 - Empfohlener sauberer Rebuild (bei Migrations-/Component-Problemen):
-  - `rm -rf build components managed_components dependencies.lock`
-  - `./scripts/fetch_components.sh`
+  - `rm -rf build managed_components dependencies.lock`
   - `. ~/esp-idf/export.sh`
   - `idf.py build`
   - `./scripts/flash.sh /dev/ttyUSB0`

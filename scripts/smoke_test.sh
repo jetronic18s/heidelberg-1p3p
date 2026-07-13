@@ -9,7 +9,6 @@ HOST=""
 MODBUS_PORT="502"
 UNIT_ID="1"
 MONITOR_SECONDS="0"
-SKIP_FETCH=0
 SKIP_GUARD=0
 SKIP_BUILD=0
 SKIP_FLASH=0
@@ -25,7 +24,6 @@ Options:
   --modbus-port <port>    Modbus TCP port (default: 502)
   --unit-id <id>          Modbus unit/slave id (default: 1)
   --monitor-seconds <n>   Run serial monitor for n seconds after flash (default: 0)
-  --skip-fetch            Skip ./scripts/fetch_components.sh
   --skip-guard            Skip check_no_arduino_types.sh
   --skip-build            Skip idf.py build
   --skip-flash            Skip flashing even when --port is set
@@ -68,8 +66,6 @@ while [[ $# -gt 0 ]]; do
       UNIT_ID="${2:-}"; shift 2 ;;
     --monitor-seconds)
       MONITOR_SECONDS="${2:-}"; shift 2 ;;
-    --skip-fetch)
-      SKIP_FETCH=1; shift ;;
     --skip-guard)
       SKIP_GUARD=1; shift ;;
     --skip-build)
@@ -108,10 +104,6 @@ if [[ "${SKIP_GUARD}" -eq 0 ]]; then
 fi
 
 cd "${IDF_DIR}"
-
-if [[ "${SKIP_FETCH}" -eq 0 ]]; then
-  run ./scripts/fetch_components.sh
-fi
 
 if [[ "${SKIP_BUILD}" -eq 0 ]]; then
   run idf.py build
