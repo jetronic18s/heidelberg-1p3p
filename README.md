@@ -56,11 +56,11 @@ Der Dingtian DT-R002 (DEV) hat einen JL1101 PHY (RTL8201F kompatibel) und einen 
 
 Die Firmware-Version wird beim Build aus dem letzten Git-Tag `v*` abgeleitet (`git describe --tags --match "v*" --dirty`):
 
-- `v2.0.0`: genau der getaggte Stand
-- `v2.0.0-2-g65f81662`: 2 Commits nach `v2.0.0`, mit Commit-Hash
+- `v1.1.0`: genau der getaggte Stand
+- `v1.1.0-2-g65f81662`: 2 Commits nach `v1.1.0`, mit Commit-Hash
 - Suffix `-dirty`: mit nicht committeten Änderungen gebaut
 
-Neue Version: `git tag -a v2.0.1 -m "..."`. Die Version im Boot-Log wird nur beim CMake-Configure ermittelt, nach einem neuen Commit oder Tag deshalb `idf.py reconfigure` (oder `rm -rf build`) vor dem Build. Die Statusseite ist immer aktuell.
+Neue Version: `git tag -a v1.1.1 -m "..."`. Die Version im Boot-Log wird nur beim CMake-Configure ermittelt, nach einem neuen Commit oder Tag deshalb `idf.py reconfigure` (oder `rm -rf build`) vor dem Build. Die Statusseite ist immer aktuell.
 
 ### Checkliste (IDF-only)
 
