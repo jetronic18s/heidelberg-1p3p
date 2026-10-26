@@ -235,7 +235,9 @@ bool setupEthernet()
                 .clock_gpio = (emac_rmii_clock_gpio_t)EMAC_CLK_OUT_180_GPIO,
             }
         },
+        .dma_burst_len = ETH_DMA_BURST_LEN_32,
         .intr_priority = 0,
+        .mdc_freq_hz = 0,
     };
     #else
     mac_config.smi_mdc_gpio_num = PIN_ETH_MDC;
