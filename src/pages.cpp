@@ -412,12 +412,8 @@ static esp_err_t handleStatusGet(httpd_req_t *req)
   sendTableRow(body, "FailSafe Current configuration (A)", s_phase_switch->getHoldingRegister(262) * 0.1f);
 
   body += "<tr><td>&nbsp;</td><td></td></tr>";
+  sendTableRow(body, "Version", APP_VERSION);
   sendTableRow(body, "Build time", __DATE__ " " __TIME__);
-#if APP_GIT_DIRTY
-  sendTableRow(body, "Git SHA", APP_GIT_SHA "-dirty");
-#else
-  sendTableRow(body, "Git SHA", APP_GIT_SHA);
-#endif
   sendTableRow(body, "Uptime", Uptime());
   body += "</table><p></p>";
 
