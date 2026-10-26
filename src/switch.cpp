@@ -70,6 +70,7 @@ PhaseSwitch::PhaseSwitch()
   ,_delay(0)
   ,_state(State::WaitingForOff)
   ,_desiredPhases(1)
+  ,_phaseSwitchRequested(false)
   ,_switchingSupported(false)
   ,_firmwareSupported(false)
   ,_inputRegister(20, 0)
@@ -352,15 +353,22 @@ void PhaseSwitch::loop(){
   }
   else if (_state == State::Delay){
     if (masterWriteHolding(HEC_REG_REMOTE_LOCK, 1) != ESP_OK) return;
-    // Restart at minimum current instead of the value cached while switching:
-    // the car draws nothing during the switch, so evcc overestimates the surplus.
-    // evcc ramps up from real measurements in its next cycle.
-    const uint16_t minCurrent = HEC_MIN_CURRENT;
-    if (masterWriteHolding(HEC_REG_MAX_CURRENT, minCurrent) != ESP_OK) return;
-    cacheHolding(HEC_REG_MAX_CURRENT, &minCurrent, 1);
+    // After boot, never enable charging on our own: evcc notices the disabled
+    // charger and enables it again with its own current.
+    // After a phase switch, keep a disabled charger disabled and otherwise
+    // restart at minimum current: the car draws nothing during the switch, so
+    // evcc overestimates the surplus. evcc ramps up in its next cycle.
+    uint16_t restartCurrent = 0;
+    if (_phaseSwitchRequested) {
+      uint16_t cached = _holdingRegister[HEC_REG_MAX_CURRENT - HOLDING_REG_OFFSET];
+      restartCurrent = cached < HEC_MIN_CURRENT ? cached : HEC_MIN_CURRENT;
+    }
+    if (masterWriteHolding(HEC_REG_MAX_CURRENT, restartCurrent) != ESP_OK) return;
+    cacheHolding(HEC_REG_MAX_CURRENT, &restartCurrent, 1);
 
+    _phaseSwitchRequested = false;
     _state = State::Running;
-    ESP_LOGI(TAG, "restored registers, max current set to minimum");
+    ESP_LOGI(TAG, "restored registers, max current %u.%u A", restartCurrent / 10, restartCurrent % 10);
     return;
   }
 }
@@ -368,12 +376,14 @@ void PhaseSwitch::loop(){
 void PhaseSwitch::switchTo1P(){
   if (!canSwitchTo1P()) return;
   _desiredPhases = 1;
+  _phaseSwitchRequested = true;
   _state = State::SwitchPhases;
 }
 
 void PhaseSwitch::switchTo3P(){
   if (!canSwitchTo3P()) return;
   _desiredPhases = 3;
+  _phaseSwitchRequested = true;
   _state = State::SwitchPhases;
 }
 
