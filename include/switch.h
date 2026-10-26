@@ -2,6 +2,7 @@
     #define SWITCH_H
     #include <cstddef>
     #include <cstdint>
+    #include <atomic>
     #include <string>
     #include <vector>
     #include "freertos/FreeRTOS.h"
@@ -34,6 +35,8 @@
         Delay,
         //delay passed -> Running
         Fault,
+        //restart requested: sent MaxCurrent=0, waiting for zero current
+        Restarting,
     };
 
     class PhaseSwitch{
@@ -65,6 +68,9 @@
             uint16_t _safetyFaultCode;
             std::string _safetyFaultText;
             uint32_t _switchOnDeadlineMs;
+            std::atomic<bool> _restartRequested;
+            uint32_t _restartDeadlineMs;
+            void handleRestart();
             void enterSafetyFault(uint16_t code, const char *text);
             bool hasSafetyFault();
             
@@ -98,6 +104,8 @@
             bool canSwitchTo1P();
             bool canSwitchTo3P();
             void setSwitchDelay(uint32_t delayMs);
+            // Stop charging, then restart the ESP32 from the main loop.
+            void requestRestart();
             uint32_t getRtuMessageCount();
             uint32_t getRtuPendingRequestCount();
             uint32_t getRtuErrorCount();

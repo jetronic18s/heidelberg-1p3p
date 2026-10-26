@@ -7,6 +7,7 @@
 #include "driver/uart.h"
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
@@ -25,6 +26,7 @@ static constexpr uint16_t SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT = 0xE102;
 static constexpr uint16_t SAFETY_FAULT_RUNNING_FEEDBACK_INVALID = 0xE103;
 static constexpr uint32_t SWITCH_CONFIRM_TIMEOUT_MS = 8000;
 static constexpr uint32_t SWITCH_POWER_ON_SETTLE_MS = 7000;
+static constexpr uint32_t RESTART_STOP_TIMEOUT_MS = 10000;
 static constexpr uint16_t MODBUS_TCP_PORT = 502;
 static constexpr uint16_t MODBUS_TCP_MAX_PDU = 253;
 static constexpr uint32_t MODBUS_TCP_CLIENT_TIMEOUT_SEC = 5;
@@ -90,6 +92,8 @@ PhaseSwitch::PhaseSwitch()
   ,_safetyFaultCode(SAFETY_FAULT_NONE)
   ,_safetyFaultText("")
   ,_switchOnDeadlineMs(0)
+  ,_restartRequested(false)
+  ,_restartDeadlineMs(0)
 {}
 
 void PhaseSwitch::begin(){
@@ -206,6 +210,11 @@ esp_err_t PhaseSwitch::masterWriteMultipleHolding(uint16_t addr, uint16_t count,
 }
 
 void PhaseSwitch::loop(){
+  if (_restartRequested) {
+    handleRestart();
+    return;
+  }
+
   if (!_tcpServerStarted) {
       return;
   }
@@ -373,6 +382,48 @@ void PhaseSwitch::loop(){
   }
 }
 
+void PhaseSwitch::requestRestart(){
+  _restartRequested = true;
+}
+
+// Restarting drops the contactors. Stop charging first so they never open
+// under load; a Heidelberg cut off while charging may not answer afterwards.
+// While Restarting, Modbus writes from evcc only go to the cache.
+void PhaseSwitch::handleRestart(){
+  if (_state != State::Restarting) {
+    // Outside Running the current is already 0 or the wallbox is off.
+    if (_state != State::Running || !_master_handle || hasSafetyFault()) {
+      ESP_LOGI(TAG, "restarting");
+      esp_restart();
+    }
+    _state = State::Restarting;
+    _restartDeadlineMs = nowMs() + RESTART_STOP_TIMEOUT_MS;
+    _previous = nowMs();
+    _delay = 0;
+    if (masterWriteHolding(HEC_REG_MAX_CURRENT, 0) != ESP_OK) {
+      ESP_LOGW(TAG, "restarting, could not stop charging");
+      esp_restart();
+    }
+    ESP_LOGI(TAG, "restart requested, waiting for zero current");
+    return;
+  }
+
+  if (nowMs() - _previous < 500) return;
+  _previous = nowMs();
+
+  uint16_t currents[3];
+  const bool zero = masterReadInput(6, 3, currents) == ESP_OK
+    && currents[0] == 0 && currents[1] == 0 && currents[2] == 0;
+  if (zero) {
+    ESP_LOGI(TAG, "zero current confirmed, restarting");
+    esp_restart();
+  }
+  if ((int32_t)(nowMs() - _restartDeadlineMs) > 0) {
+    ESP_LOGW(TAG, "timeout waiting for zero current, restarting");
+    esp_restart();
+  }
+}
+
 void PhaseSwitch::switchTo1P(){
   if (!canSwitchTo1P()) return;
   _desiredPhases = 1;
@@ -446,6 +497,7 @@ std::string PhaseSwitch::getState(){
     case State::SwitchedOn: result += "SwitchedOn"; break;
     case State::Delay: result += "Delay"; break;
     case State::Fault: result += "Fault"; break;
+    case State::Restarting: result += "Restarting"; break;
     default: result += "undefined"; break;
   }
   if (_safetyFaultCode != SAFETY_FAULT_NONE){
