@@ -35,10 +35,10 @@ Der Dingtian DT-R002 (DEV) hat einen JL1101 PHY (RTL8201F kompatibel) und einen 
 - Build-Target: ESP-IDF (Repo-Root)
 - Framework: native ESP-IDF
 
-### Build (ESP-IDF 5.5.4)
+### Build (ESP-IDF 5.5.6)
 
 - Empfohlener Standard-Workflow:
-- Für ESP-IDF `5.5.4` direkt im Repo-Root bauen:
+- Für ESP-IDF `5.5.6` direkt im Repo-Root bauen:
 - `. ~/esp-idf/export.sh`
 - `idf.py set-target esp32`
 - `idf.py -p /dev/ttyUSB0 flash monitor`

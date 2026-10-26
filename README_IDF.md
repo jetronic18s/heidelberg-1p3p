@@ -1,4 +1,4 @@
-# ESP-IDF (v5.5.4) Build
+# ESP-IDF (v5.5.6) Build
 
 This repository uses an ESP-IDF-only build flow.
 
