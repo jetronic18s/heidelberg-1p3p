@@ -51,7 +51,7 @@ else
     MIN_VER="5.3.0"
     if [[ "$(printf '%s\n' "${MIN_VER}" "${IDF_VER}" | sort -V | head -n1)" != "${MIN_VER}" ]]; then
       echo "Detected ESP-IDF ${IDF_VER}, but this project requires >= ${MIN_VER}." >&2
-      echo "Use a newer export, e.g.: . /tmp/esp-idf-5.5.4/export.sh" >&2
+      echo "Use ESP-IDF 5.5.6, e.g.: . ~/esp-idf/export.sh" >&2
       exit 1
     fi
   fi
