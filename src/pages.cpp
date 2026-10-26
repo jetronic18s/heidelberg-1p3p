@@ -180,11 +180,28 @@ static void redirect(httpd_req_t *req, const char *location)
   httpd_resp_send(req, nullptr, 0);
 }
 
+// Upper bound for the phase switch to stop charging before a forced restart.
+static constexpr uint64_t RESTART_FALLBACK_US = 15000000;
+
 static void scheduleRestart(uint64_t delayUs)
 {
   if (s_restart_timer == nullptr) {
     esp_timer_create_args_t args = {};
-    args.callback = [](void *) { esp_restart(); };
+    args.callback = [](void *) {
+      if (s_phase_switch == nullptr) {
+        esp_restart();
+      }
+      // Let the phase switch stop charging and restart; force it if that hangs.
+      s_phase_switch->requestRestart();
+      esp_timer_create_args_t fallbackArgs = {};
+      fallbackArgs.callback = [](void *) { esp_restart(); };
+      fallbackArgs.name = "restart_fallback";
+      esp_timer_handle_t fallback = nullptr;
+      if (esp_timer_create(&fallbackArgs, &fallback) != ESP_OK
+          || esp_timer_start_once(fallback, RESTART_FALLBACK_US) != ESP_OK) {
+        esp_restart();
+      }
+    };
     args.name = "restart";
     esp_timer_create(&args, &s_restart_timer);
   }
