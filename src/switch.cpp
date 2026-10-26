@@ -908,11 +908,20 @@ bool PhaseSwitch::readCachedInput(uint16_t addr, uint16_t count, std::vector<uin
   if (addr < 4 || (size_t)addr + count > _inputRegister.size()) return false;
 
   values.resize(count);
-  if (_inputRegister.size() > 5) {
-    _inputRegister[5] = 4; // B1: connected, not charging, as seen by evcc during switching.
-  }
   for (uint16_t i = 0; i < count; i++) {
-    values[i] = _inputRegister[addr + i];
+    uint16_t reg = addr + i;
+    switch (reg) {
+      case 5:
+        values[i] = 4; // B1: connected, not charging, as seen by evcc during switching.
+        break;
+      case 6: case 7: case 8: // L1-L3 current
+      case 14:                // power
+        values[i] = 0; // cached values predate the switch; the car draws nothing now.
+        break;
+      default:
+        values[i] = _inputRegister[reg];
+        break;
+    }
   }
   return true;
 }
