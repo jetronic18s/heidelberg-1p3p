@@ -10,6 +10,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags are needed for the firmware version
 
       - name: Build ESP-IDF project
         uses: espressif/esp-idf-ci-action@v1
@@ -18,6 +20,7 @@ jobs:
           target: esp32
           path: .
           command: |
+            git config --global --add safe.directory "$PWD"
             ./scripts/check_no_arduino_types.sh
             idf.py build
 
