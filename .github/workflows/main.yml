@@ -11,7 +11,7 @@ jobs:
       contents: write # create draft releases for version tags
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0 # tags are needed for the firmware version
 
@@ -63,7 +63,7 @@ jobs:
           EOF
 
       - name: Upload firmware bundle artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: heidelberg-1p3p-flash-bundle
           path: dist/heidelberg-1p3p-flash-bundle
