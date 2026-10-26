@@ -49,6 +49,11 @@ typedef union {
 } psr_reg_t;
 #define ETH_PHY_PSR_REG_ADDR (0x1F)
 
+/* JL1101 identifier (PHYIDR1 = 0x937C, PHYIDR2 = 0x402x) */
+#define JL1101_OUI_MSB (0x937C)
+#define JL1101_OUI_LSB (0x10)
+#define JL1101_MODEL (0x2)
+
 typedef struct {
     esp_eth_phy_t parent;
     esp_eth_mediator_t *eth;
@@ -356,7 +361,7 @@ static esp_err_t jl1101_init(esp_eth_phy_t *phy)
               err);
     PHY_CHECK(eth->phy_reg_read(eth, jl1101->addr, ETH_PHY_IDR2_REG_ADDR, &(id2.val)) == ESP_OK, "read ID2 failed",
               err);
-    if (!(id1.oui_msb == 0x7 && id2.oui_lsb == 0x356 && id2.vendor_model == 0x08)) {
+    if (!(id1.oui_msb == JL1101_OUI_MSB && id2.oui_lsb == JL1101_OUI_LSB && id2.vendor_model == JL1101_MODEL)) {
         ESP_LOGW(TAG, "unexpected PHY ID (ouimsb=0x%x, ouilsb=0x%x, model=0x%x), continuing",
                  id1.oui_msb, id2.oui_lsb, id2.vendor_model);
     }
