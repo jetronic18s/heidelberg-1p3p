@@ -62,6 +62,12 @@ Die Firmware-Version wird beim Build aus dem letzten Git-Tag `v*` abgeleitet (`g
 
 Neue Version: `git tag -a v1.1.1 -m "..."`. Die Version im Boot-Log wird nur beim CMake-Configure ermittelt, nach einem neuen Commit oder Tag deshalb `idf.py reconfigure` (oder `rm -rf build`) vor dem Build. Die Statusseite ist immer aktuell.
 
+### Release
+
+1. Stand testen, dann taggen und pushen: `git tag -a v1.1.1 -m "..."` und `git push origin v1.1.1`
+2. Die CI baut den Tag und legt einen Release-Entwurf an, mit `heidelberg-1p3p-<tag>.bin` (OTA), dem Flash-Bundle als ZIP und Release Notes aus den Commits seit dem letzten Tag (`scripts/release_notes.sh`, gruppiert nach `feat`, `fix` und Rest).
+3. Entwurf auf GitHub unter *Releases* prüfen, Notes bei Bedarf glätten und veröffentlichen.
+
 ### Checkliste (IDF-only)
 
 Schneller Ablauf pro Firmware-Stand:
