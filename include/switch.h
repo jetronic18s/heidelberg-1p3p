@@ -12,6 +12,7 @@
 
     #define HEC_REG_REMOTE_LOCK (uint16_t)259
     #define HEC_REG_MAX_CURRENT (uint16_t)261
+    #define HEC_MIN_CURRENT (uint16_t)60 // 6.0 A in 0.1 A units
     #define HOLDING_REG_OFFSET (uint16_t)256
 
     enum State {

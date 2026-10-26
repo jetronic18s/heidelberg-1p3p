@@ -352,11 +352,15 @@ void PhaseSwitch::loop(){
   }
   else if (_state == State::Delay){
     if (masterWriteHolding(HEC_REG_REMOTE_LOCK, 1) != ESP_OK) return;
-    uint16_t savedMaxCurrent = _holdingRegister[HEC_REG_MAX_CURRENT - HOLDING_REG_OFFSET];
-    if (masterWriteHolding(HEC_REG_MAX_CURRENT, savedMaxCurrent) != ESP_OK) return;
-    
+    // Restart at minimum current instead of the value cached while switching:
+    // the car draws nothing during the switch, so evcc overestimates the surplus.
+    // evcc ramps up from real measurements in its next cycle.
+    const uint16_t minCurrent = HEC_MIN_CURRENT;
+    if (masterWriteHolding(HEC_REG_MAX_CURRENT, minCurrent) != ESP_OK) return;
+    cacheHolding(HEC_REG_MAX_CURRENT, &minCurrent, 1);
+
     _state = State::Running;
-    ESP_LOGI(TAG, "restored registers");
+    ESP_LOGI(TAG, "restored registers, max current set to minimum");
     return;
   }
 }
