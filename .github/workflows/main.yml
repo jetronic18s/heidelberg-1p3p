@@ -14,11 +14,10 @@ jobs:
       - name: Build ESP-IDF project
         uses: espressif/esp-idf-ci-action@v1
         with:
-          esp_idf_version: v5.5.2
+          esp_idf_version: v5.5.4
           target: esp32
           path: .
           command: |
-            ./scripts/fetch_components.sh
             ./scripts/check_no_arduino_types.sh
             idf.py build
 
