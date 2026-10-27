@@ -30,6 +30,7 @@ static constexpr uint32_t SWITCH_POWER_ON_SETTLE_MS = 7000;
 // The Heidelberg answers about 20 s after power-on.
 static constexpr uint32_t WALLBOX_RESPONSE_TIMEOUT_MS = 60000;
 static constexpr uint32_t RESTART_STOP_TIMEOUT_MS = 10000;
+static constexpr uint32_t UNLOCK_CONFIRM_TIMEOUT_MS = 15000;
 static constexpr uint16_t MODBUS_TCP_PORT = 502;
 static constexpr uint16_t MODBUS_TCP_MAX_PDU = 253;
 static constexpr uint32_t MODBUS_TCP_CLIENT_TIMEOUT_SEC = 5;
@@ -97,6 +98,7 @@ PhaseSwitch::PhaseSwitch()
   ,_safetyFaultText("")
   ,_switchOnDeadlineMs(0)
   ,_wallboxResponseDeadlineMs(0)
+  ,_unlockDeadlineMs(0)
   ,_restartRequested(false)
   ,_restartDeadlineMs(0)
 {}
@@ -396,8 +398,28 @@ void PhaseSwitch::loop(){
 
     _phaseSwitchRequested = false;
     _currentWrittenDuringSwitch = false;
-    _state = State::Running;
+    _state = State::Unlocking;
+    _unlockDeadlineMs = nowMs() + UNLOCK_CONFIRM_TIMEOUT_MS;
     ESP_LOGI(TAG, "restored registers, max current %u.%u A", restartCurrent / 10, restartCurrent % 10);
+    return;
+  }
+  else if (_state == State::Unlocking){
+    // The Heidelberg reports "locked" for a few seconds after the unlock.
+    // Keep serving the cache meanwhile, evcc rejects status 10.
+    uint16_t status;
+    if (masterReadInput(5, 1, &status) == ESP_OK && status != 10) {
+      ESP_LOGI(TAG, "unlock confirmed");
+      _state = State::Running;
+      return;
+    }
+    if (nowMs() > _unlockDeadlineMs) {
+      ESP_LOGW(TAG, "timeout waiting for unlock, writing it again");
+      masterWriteHolding(HEC_REG_REMOTE_LOCK, 1);
+      _state = State::Running;
+      return;
+    }
+    _previous = nowMs();
+    _delay = 500;
     return;
   }
 }
@@ -411,8 +433,9 @@ void PhaseSwitch::requestRestart(){
 // While Restarting, Modbus writes from evcc only go to the cache.
 void PhaseSwitch::handleRestart(){
   if (_state != State::Restarting) {
-    // Outside Running the current is already 0 or the wallbox is off.
-    if (_state != State::Running || !_master_handle || hasSafetyFault()) {
+    // Outside Running and Unlocking the current is already 0 or the wallbox is off.
+    const bool mayCharge = _state == State::Running || _state == State::Unlocking;
+    if (!mayCharge || !_master_handle || hasSafetyFault()) {
       ESP_LOGI(TAG, "restarting");
       esp_restart();
     }
@@ -524,6 +547,7 @@ std::string PhaseSwitch::getState(){
     case State::SwitchedOn: result += "SwitchedOn"; break;
     case State::Delay: result += "Delay"; break;
     case State::Fault: result += "Fault"; break;
+    case State::Unlocking: result += "Unlocking"; break;
     case State::Restarting: result += "Restarting"; break;
     default: result += "undefined"; break;
   }
@@ -898,7 +922,8 @@ bool PhaseSwitch::handleWriteHolding(uint8_t, uint16_t addr, uint16_t value, std
     return true;
   }
 
-  if (_firmwareSupported && _state != State::Running) {
+  // While Unlocking the wallbox answers again; only reads still come from the cache.
+  if (_firmwareSupported && _state != State::Running && _state != State::Unlocking) {
     if (addr < HOLDING_REG_OFFSET || (addr - HOLDING_REG_OFFSET) >= _holdingRegister.size()) {
       buildException(FC_WRITE_HOLDING, EX_ILLEGAL_DATA_ADDRESS, responsePdu);
       return true;
@@ -923,7 +948,8 @@ bool PhaseSwitch::handleWriteHolding(uint8_t, uint16_t addr, uint16_t value, std
 
 bool PhaseSwitch::handleWriteMultiple(uint8_t, uint16_t addr, uint16_t count, const uint16_t* values, std::vector<uint8_t>& responsePdu)
 {
-  if (_firmwareSupported && _state != State::Running) {
+  // While Unlocking the wallbox answers again; only reads still come from the cache.
+  if (_firmwareSupported && _state != State::Running && _state != State::Unlocking) {
     if (addr < HOLDING_REG_OFFSET || (addr - HOLDING_REG_OFFSET + count) > _holdingRegister.size()) {
       buildException(FC_WRITE_MULTIPLE, EX_ILLEGAL_DATA_ADDRESS, responsePdu);
       return true;

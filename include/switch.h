@@ -33,8 +33,10 @@
         SwitchedOn,
         //confirmed phases -> Wait for Delay,
         Delay,
-        //delay passed -> Running
+        //delay passed -> Unlocking
         Fault,
+        //released the remote lock, waiting until the wallbox reports it -> Running
+        Unlocking,
         //restart requested: sent MaxCurrent=0 and lock, waiting for both
         Restarting,
     };
@@ -70,6 +72,7 @@
             std::string _safetyFaultText;
             uint32_t _switchOnDeadlineMs;
             uint32_t _wallboxResponseDeadlineMs;
+            uint32_t _unlockDeadlineMs;
             std::atomic<bool> _restartRequested;
             uint32_t _restartDeadlineMs;
             void handleRestart();
