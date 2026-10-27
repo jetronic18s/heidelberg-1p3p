@@ -24,8 +24,11 @@ static constexpr uint16_t SAFETY_FAULT_NONE = 0x0000;
 static constexpr uint16_t SAFETY_FAULT_FEEDBACK_BOTH_ACTIVE = 0xE101;
 static constexpr uint16_t SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT = 0xE102;
 static constexpr uint16_t SAFETY_FAULT_RUNNING_FEEDBACK_INVALID = 0xE103;
+static constexpr uint16_t SAFETY_FAULT_WALLBOX_NOT_RESPONDING = 0xE104;
 static constexpr uint32_t SWITCH_CONFIRM_TIMEOUT_MS = 8000;
 static constexpr uint32_t SWITCH_POWER_ON_SETTLE_MS = 7000;
+// The Heidelberg answers about 20 s after power-on.
+static constexpr uint32_t WALLBOX_RESPONSE_TIMEOUT_MS = 60000;
 static constexpr uint32_t RESTART_STOP_TIMEOUT_MS = 10000;
 static constexpr uint16_t MODBUS_TCP_PORT = 502;
 static constexpr uint16_t MODBUS_TCP_MAX_PDU = 253;
@@ -92,6 +95,7 @@ PhaseSwitch::PhaseSwitch()
   ,_safetyFaultCode(SAFETY_FAULT_NONE)
   ,_safetyFaultText("")
   ,_switchOnDeadlineMs(0)
+  ,_wallboxResponseDeadlineMs(0)
   ,_restartRequested(false)
   ,_restartDeadlineMs(0)
 {}
@@ -259,6 +263,7 @@ void PhaseSwitch::loop(){
       writePin(PIN_1P_OUT, RELAY_ON);
     }
     _switchOnDeadlineMs = now + SWITCH_POWER_ON_SETTLE_MS + SWITCH_CONFIRM_TIMEOUT_MS;
+    _wallboxResponseDeadlineMs = now + WALLBOX_RESPONSE_TIMEOUT_MS;
     _previous = now;
     _delay = SWITCH_POWER_ON_SETTLE_MS;
     _state = State::SwitchedOn;
@@ -266,6 +271,13 @@ void PhaseSwitch::loop(){
   }
 
   if (!_master_handle || !validateSetup()) {
+    // The switch-on confirmation below needs a responding wallbox. Without
+    // this check a wallbox that never answers after power-on keeps us waiting
+    // forever with the contactor closed.
+    if (_state == State::SwitchedOn && nowMs() > _wallboxResponseDeadlineMs) {
+      enterSafetyFault(SAFETY_FAULT_WALLBOX_NOT_RESPONDING, "wallbox not responding after power-on");
+      return;
+    }
     _previous = nowMs();
     _delay = 5000; // Wait 5s before retrying validation
     return;

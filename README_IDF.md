@@ -137,3 +137,7 @@ state changes to `Fault`. The status page shows `Safety Fault Code` and
 - `0xE103`: invalid contactor feedback while state is `Running` (no active
   feedback or inconsistent feedback).
   Check contactor auxiliary contact wiring and input stability.
+- `0xE104`: the wallbox does not answer on Modbus within 60 s after the
+  contactor was switched on (e.g. after a restart).
+  Check RS485 wiring and whether the wallbox powers up; a restart of the
+  ESP32 power-cycles the wallbox again.

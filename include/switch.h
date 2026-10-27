@@ -68,6 +68,7 @@
             uint16_t _safetyFaultCode;
             std::string _safetyFaultText;
             uint32_t _switchOnDeadlineMs;
+            uint32_t _wallboxResponseDeadlineMs;
             std::atomic<bool> _restartRequested;
             uint32_t _restartDeadlineMs;
             void handleRestart();
