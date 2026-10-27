@@ -40,7 +40,8 @@ section "Build and maintenance" "build|ci|refactor|perf|test|docs|chore"
 printf '%s\n' \
   '## Update' \
   "- **OTA:** web interface → *Firmware update* → upload \`heidelberg-1p3p-${TAG}.bin\`." \
-  '  Charging is stopped before the restart and evcc resumes it afterwards.' \
+  '  Charging is stopped before the restart. evcc resumes it afterwards; in PV mode' \
+  '  only after its configured enable delay.' \
   '  Updating from v1.1.0 or older restarts without stopping charging, so stop charging in evcc first.' \
   '- **Serial:** use the flash bundle, see the included `README.txt`.' \
   ''
