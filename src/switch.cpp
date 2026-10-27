@@ -424,22 +424,27 @@ void PhaseSwitch::handleRestart(){
       ESP_LOGW(TAG, "restarting, could not stop charging");
       esp_restart();
     }
-    ESP_LOGI(TAG, "restart requested, waiting for zero current");
+    // Lock the wallbox like a phase switch does: the Heidelberg keeps its
+    // energy counter across the power loss only once it is locked.
+    if (masterWriteHolding(HEC_REG_REMOTE_LOCK, 0) != ESP_OK) {
+      ESP_LOGW(TAG, "restarting, could not lock the wallbox");
+    }
+    ESP_LOGI(TAG, "restart requested, waiting for lock and zero current");
     return;
   }
 
   if (nowMs() - _previous < 500) return;
   _previous = nowMs();
 
-  uint16_t currents[3];
-  const bool zero = masterReadInput(6, 3, currents) == ESP_OK
-    && currents[0] == 0 && currents[1] == 0 && currents[2] == 0;
-  if (zero) {
-    ESP_LOGI(TAG, "zero current confirmed, restarting");
+  uint16_t data[4];
+  const bool stopped = masterReadInput(5, 4, data) == ESP_OK
+    && data[0] == 10 && data[1] == 0 && data[2] == 0 && data[3] == 0;
+  if (stopped) {
+    ESP_LOGI(TAG, "lock and zero current confirmed, restarting");
     esp_restart();
   }
   if ((int32_t)(nowMs() - _restartDeadlineMs) > 0) {
-    ESP_LOGW(TAG, "timeout waiting for zero current, restarting");
+    ESP_LOGW(TAG, "timeout waiting for lock and zero current, restarting");
     esp_restart();
   }
 }

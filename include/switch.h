@@ -35,7 +35,7 @@
         Delay,
         //delay passed -> Running
         Fault,
-        //restart requested: sent MaxCurrent=0, waiting for zero current
+        //restart requested: sent MaxCurrent=0 and lock, waiting for both
         Restarting,
     };
 
