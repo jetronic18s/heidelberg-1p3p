@@ -1,4 +1,7 @@
-# ESP-IDF (v5.5.6) Build
+# Development (ESP-IDF 5.5.6)
+
+Developer documentation: building, versioning, releases and tests. For the
+project overview, installation and usage see [README.md](README.md) (German).
 
 This repository uses an ESP-IDF-only build flow.
 
@@ -26,6 +29,14 @@ idf.py set-target esp32
 idf.py build
 ```
 
+Clean rebuild (after IDF or component changes):
+
+```
+rm -rf build managed_components dependencies.lock
+. ~/esp-idf/export.sh
+idf.py build
+```
+
 ## Flash
 
 From the repository root:
@@ -33,6 +44,64 @@ From the repository root:
 ```
 ./scripts/flash.sh /dev/ttyUSB0
 ```
+
+`flash.sh` writes fixed addresses from these binary paths:
+- `build/bootloader/bootloader.bin`
+- `build/partition_table/partition-table.bin`
+- `build/ota_data_initial.bin`
+- `build/heidelberg-1p3p.bin`
+
+If those binaries are missing, it falls back to `idf.py flash`.
+
+Or manually:
+
+```
+. ~/esp-idf/export.sh
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+To erase everything first, including NVS (WiFi credentials and config):
+
+```
+idf.py -p /dev/ttyUSB0 erase-flash
+```
+
+After booting, check `App version` in the log or `Version` at the bottom of the
+status page.
+
+## Versioning
+
+The firmware version is derived from the latest `v*` Git tag
+(`git describe --tags --match "v*" --dirty`):
+
+- `v1.1.2`: exactly the tagged commit
+- `v1.1.2-2-gfadc5d4b`: 2 commits after `v1.1.2`, with the commit hash
+- `-dirty` suffix: built with uncommitted changes
+
+New version: `git tag -a v1.1.3 -m "..."`. The version is determined at CMake
+configure time, so run `idf.py reconfigure` (or `rm -rf build`) after a new
+commit or tag before building.
+
+## Release
+
+1. Test the firmware, then tag and push: `git tag -a v1.1.3 -m "..."` and
+   `git push origin v1.1.3`.
+2. CI builds the tag and creates a draft release with
+   `heidelberg-1p3p-<tag>.bin` (OTA), the flash bundle as ZIP, and release
+   notes generated from the commits since the previous tag
+   (`scripts/release_notes.sh`, grouped by `feat`, `fix` and the rest).
+3. Review the draft on GitHub under *Releases*, polish the notes if needed and
+   publish it.
+
+## Checklist
+
+Quick run per firmware build:
+
+1. Build smoke test: `./scripts/smoke_test.sh`
+2. Optional flash and short monitor:
+   `./scripts/smoke_test.sh --port /dev/ttyUSB0 --monitor-seconds 20`
+3. Optional Modbus read checks against a running device:
+   `./scripts/smoke_test.sh --host <DEVICE_IP>`
 
 ## Debug Logging
 
@@ -48,21 +117,6 @@ or:
 
 ```bash
 nc <DEVICE_IP> 23
-```
-
-`flash.sh` writes fixed addresses from these binary paths:
-- `build/bootloader/bootloader.bin`
-- `build/partition_table/partition-table.bin`
-- `build/ota_data_initial.bin`
-- `build/heidelberg-1p3p.bin`
-
-If those binaries are missing, it falls back to `idf.py flash`.
-
-Or manually:
-
-```
-. ~/esp-idf/export.sh
-idf.py -p /dev/ttyUSB0 flash
 ```
 
 ## Smoke Test
@@ -117,6 +171,13 @@ Notes:
 - For first runs, keep `--max-transport-errors` at `0`; increase only if your network is noisy.
 - Full wallbox checklist: `docs/MODBUS_TEST_PROTOCOL.md`.
 
+## Ethernet/WiFi Handover Test
+
+- Boot with LAN plugged in: WiFi must stay off.
+- Unplug LAN: WiFi STA (or the setup AP without credentials) must start.
+- Plug LAN back in: WiFi must stop cleanly (`wifi:mode : null`).
+- Repeat several times, including short LAN flapping.
+
 ## Notes
 
 - Ethernet setup currently relies on `ethernet_jl1101.*` and IDF ethernet APIs.
@@ -125,19 +186,4 @@ Notes:
 
 ## Safety Fault Codes
 
-When a safety fault is detected, both contactor outputs are switched off and
-state changes to `Fault`. The status page shows `Safety Fault Code` and
-`Safety Fault`.
-
-- `0xE101`: both contactor feedback inputs are active at the same time.
-  Check wiring and feedback logic.
-- `0xE102`: timeout while confirming target state after switching (feedback
-  input and/or phase voltage confirmation did not arrive in time).
-  Check contactor movement, feedback inputs, and phase detection.
-- `0xE103`: invalid contactor feedback while state is `Running` (no active
-  feedback or inconsistent feedback).
-  Check contactor auxiliary contact wiring and input stability.
-- `0xE104`: the wallbox does not answer on Modbus within 60 s after the
-  contactor was switched on (e.g. after a restart).
-  Check RS485 wiring and whether the wallbox powers up; a restart of the
-  ESP32 power-cycles the wallbox again.
+See [Fehlercodes](README.md#fehlercodes) in the README.

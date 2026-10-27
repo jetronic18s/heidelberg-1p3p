@@ -30,54 +30,18 @@ Der Dingtian DT-R002 (DEV) hat einen JL1101 PHY (RTL8201F kompatibel) und einen 
 - MDIO: `GPIO18`
 - PHY RST/PWR: `GPIO0`
 
-### Aktivierung
+## Firmware installieren
 
-- Build-Target: ESP-IDF (Repo-Root)
-- Framework: native ESP-IDF
+Fertige Firmware gibt es unter [Releases](https://github.com/jetronic18s/heidelberg-1p3p/releases):
 
-### Build (ESP-IDF 5.5.6)
+- **Update per OTA:** Weboberfläche → *Firmware update* → `heidelberg-1p3p-<version>.bin` hochladen. Der ESP stoppt vorher das Laden und sperrt die Wallbox, evcc nimmt das Laden danach wieder auf (im PV-Modus erst nach der eingestellten Einschaltverzögerung).
+- **Erstinstallation per USB-Seriell:** Flash-Bundle (ZIP) aus dem Release verwenden, Anleitung liegt als `README.txt` bei. Das Pinout zum Flashen: [Link](docs/Dingtian%20Relay%20Board%20ESP32%20Flash%20Pinout.jpg)
 
-- Empfohlener Standard-Workflow:
-- Für ESP-IDF `5.5.6` direkt im Repo-Root bauen:
-- `. ~/esp-idf/export.sh`
-- `idf.py set-target esp32`
-- `idf.py -p /dev/ttyUSB0 flash monitor`
-- Details: siehe `README_IDF.md`.
-- Optional vor dem Flashen komplett löschen (inkl. NVS/WLAN-Credentials):
-  - `idf.py -p /dev/ttyUSB0 erase-flash`
-- Empfohlener sauberer Rebuild (bei Migrations-/Component-Problemen):
-  - `rm -rf build managed_components dependencies.lock`
-  - `. ~/esp-idf/export.sh`
-  - `idf.py build`
-  - `./scripts/flash.sh /dev/ttyUSB0`
-- Nach dem Boot im Log (`App version`) oder unten auf der Statusseite (`Version`) prüfen, dass der erwartete Stand läuft.
+Die installierte Version steht unten auf der Statusseite (`Version`).
 
-### Versionsnummer
+Selbst bauen, Versionierung, Release-Ablauf und Tests: siehe [README_IDF.md](README_IDF.md).
 
-Die Firmware-Version wird beim Build aus dem letzten Git-Tag `v*` abgeleitet (`git describe --tags --match "v*" --dirty`):
-
-- `v1.1.0`: genau der getaggte Stand
-- `v1.1.0-2-g65f81662`: 2 Commits nach `v1.1.0`, mit Commit-Hash
-- Suffix `-dirty`: mit nicht committeten Änderungen gebaut
-
-Neue Version: `git tag -a v1.1.1 -m "..."`. Die Version im Boot-Log wird nur beim CMake-Configure ermittelt, nach einem neuen Commit oder Tag deshalb `idf.py reconfigure` (oder `rm -rf build`) vor dem Build. Die Statusseite ist immer aktuell.
-
-### Release
-
-1. Stand testen, dann taggen und pushen: `git tag -a v1.1.1 -m "..."` und `git push origin v1.1.1`
-2. Die CI baut den Tag und legt einen Release-Entwurf an, mit `heidelberg-1p3p-<tag>.bin` (OTA), dem Flash-Bundle als ZIP und Release Notes aus den Commits seit dem letzten Tag (`scripts/release_notes.sh`, gruppiert nach `feat`, `fix` und Rest).
-3. Entwurf auf GitHub unter *Releases* prüfen, Notes bei Bedarf glätten und veröffentlichen.
-
-### Checkliste (IDF-only)
-
-Schneller Ablauf pro Firmware-Stand:
-
-1. Build-Smoketest:
-   - `./scripts/smoke_test.sh`
-2. Optional Flash + kurzer Monitor:
-   - `./scripts/smoke_test.sh --port /dev/ttyUSB0 --monitor-seconds 20`
-3. Optional Modbus-Read-Checks gegen laufendes Gerät:
-   - `./scripts/smoke_test.sh --host <IP_DER_BOX>`
+## Bedienung
 
 ### Statusanzeige
 
@@ -97,25 +61,30 @@ Wenn Ethernet Link + IP hat, wird WLAN automatisch deaktiviert. Fällt Ethernet 
 Wenn kein WLAN eingerichtet ist und LAN wegfällt, startet direkt das WLAN‑Konfigurationsportal unter `http://192.168.4.1`.
 Nach erfolgreichem Speichern der WLAN‑Daten führt das Gerät einen automatischen Reboot aus und verbindet sich danach per STA mit dem konfigurierten WLAN.
 
-Kurztest für stabilen Handover:
-- Start mit eingestecktem LAN: WLAN muss aus bleiben.
-- LAN abziehen: WLAN STA (oder Setup-AP ohne Credentials) muss starten.
-- LAN wieder einstecken: WLAN muss sauber stoppen (`wifi:mode : null`).
-- Mehrfach wiederholen, auch mit kurzem LAN-Flattern.
-
 ### Modbus aktivieren/deaktivieren
 
 Unter **Config** kann Modbus komplett deaktiviert werden. In diesem Fall wird im Status keine Register‑Aktualisierung angeboten.
 
 ### Telnet-Debug (bei aktivem Modbus)
 
-Wenn Modbus/RS485 aktiv ist, kann unter **Config** zusaetzlich **Telnet-Debug aktiv (Port 23)** eingeschaltet werden.
-Damit werden die Debug-Logs parallel zur seriellen Konsole ueber Telnet ausgegeben:
+Wenn Modbus/RS485 aktiv ist, kann unter **Config** zusätzlich **Telnet-Debug aktiv (Port 23)** eingeschaltet werden.
+Damit werden die Debug-Logs parallel zur seriellen Konsole über Telnet ausgegeben:
 
 - `telnet <IP_DER_BOX> 23`
 - alternativ: `nc <IP_DER_BOX> 23`
 
 Bei deaktiviertem Modbus wird Telnet-Debug automatisch deaktiviert.
+
+## Fehlercodes
+
+Erkennt der ESP einen Sicherheitsfehler, schaltet er beide Schütze ab und geht in den Zustand `Fault`. Die Statusseite zeigt dann `Safety Fault Code` und `Safety Fault`. Der Fehler bleibt bis zum nächsten Neustart des ESP bestehen.
+
+| Code | Bedeutung | Prüfen |
+| ---- | --------- | ------ |
+| `0xE101` | Beide Rückmelde-Eingänge der Schütze sind gleichzeitig aktiv. | Verdrahtung und Logik der Hilfsschalter |
+| `0xE102` | Nach dem Umschalten kam die Bestätigung nicht rechtzeitig (Rückmelde-Eingang und/oder Phasenspannungen). | Schaltet das Schütz? Rückmelde-Eingänge, Phasenerkennung |
+| `0xE103` | Ungültige Rückmeldung im Betrieb (`Running`): kein oder widersprüchliches Rückmeldesignal. | Hilfsschalter-Verdrahtung, stabile Eingänge |
+| `0xE104` | Die Wallbox antwortet nach dem Einschalten 60 s lang nicht auf Modbus (z.B. nach einem Neustart). | RS485-Verdrahtung, startet die Wallbox überhaupt? Ein Neustart des ESP schaltet die Wallbox erneut aus und ein. |
 
 ## Darf ich das?
 
