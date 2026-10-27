@@ -76,6 +76,7 @@ PhaseSwitch::PhaseSwitch()
   ,_state(State::WaitingForOff)
   ,_desiredPhases(1)
   ,_phaseSwitchRequested(false)
+  ,_currentWrittenDuringSwitch(false)
   ,_switchingSupported(false)
   ,_firmwareSupported(false)
   ,_inputRegister(20, 0)
@@ -375,13 +376,18 @@ void PhaseSwitch::loop(){
   else if (_state == State::Delay){
     // After boot, never enable charging on our own: evcc notices the disabled
     // charger and enables it again with its own current.
-    // After a phase switch, keep a disabled charger disabled and otherwise
-    // restart at minimum current: the car draws nothing during the switch, so
-    // evcc overestimates the surplus. evcc ramps up in its next cycle.
+    // After a phase switch, use the current evcc wrote during the switch: it is
+    // already computed for the new phase count, and evcc does not write it
+    // again while its target stays the same. A current from before the switch
+    // is capped to the minimum: it was meant for the old phase count.
     uint16_t restartCurrent = 0;
     if (_phaseSwitchRequested) {
       uint16_t cached = _holdingRegister[HEC_REG_MAX_CURRENT - HOLDING_REG_OFFSET];
-      restartCurrent = cached < HEC_MIN_CURRENT ? cached : HEC_MIN_CURRENT;
+      if (_currentWrittenDuringSwitch) {
+        restartCurrent = cached;
+      } else {
+        restartCurrent = cached < HEC_MIN_CURRENT ? cached : HEC_MIN_CURRENT;
+      }
     }
     if (masterWriteHolding(HEC_REG_MAX_CURRENT, restartCurrent) != ESP_OK) return;
     cacheHolding(HEC_REG_MAX_CURRENT, &restartCurrent, 1);
@@ -389,6 +395,7 @@ void PhaseSwitch::loop(){
     if (masterWriteHolding(HEC_REG_REMOTE_LOCK, 1) != ESP_OK) return;
 
     _phaseSwitchRequested = false;
+    _currentWrittenDuringSwitch = false;
     _state = State::Running;
     ESP_LOGI(TAG, "restored registers, max current %u.%u A", restartCurrent / 10, restartCurrent % 10);
     return;
@@ -441,6 +448,7 @@ void PhaseSwitch::switchTo1P(){
   if (!canSwitchTo1P()) return;
   _desiredPhases = 1;
   _phaseSwitchRequested = true;
+  _currentWrittenDuringSwitch = false;
   _state = State::SwitchPhases;
 }
 
@@ -448,6 +456,7 @@ void PhaseSwitch::switchTo3P(){
   if (!canSwitchTo3P()) return;
   _desiredPhases = 3;
   _phaseSwitchRequested = true;
+  _currentWrittenDuringSwitch = false;
   _state = State::SwitchPhases;
 }
 
@@ -890,6 +899,9 @@ bool PhaseSwitch::handleWriteHolding(uint8_t, uint16_t addr, uint16_t value, std
       return true;
     }
     cacheHolding(addr, &value, 1);
+    if (_phaseSwitchRequested && addr == HEC_REG_MAX_CURRENT) {
+      _currentWrittenDuringSwitch = true;
+    }
   } else {
     if (masterWriteHolding(addr, value) != ESP_OK) {
       buildException(FC_WRITE_HOLDING, EX_SERVER_FAILURE, responsePdu);
@@ -912,6 +924,9 @@ bool PhaseSwitch::handleWriteMultiple(uint8_t, uint16_t addr, uint16_t count, co
       return true;
     }
     cacheHolding(addr, values, count);
+    if (_phaseSwitchRequested && addr <= HEC_REG_MAX_CURRENT && HEC_REG_MAX_CURRENT < addr + count) {
+      _currentWrittenDuringSwitch = true;
+    }
   } else {
     if (masterWriteMultipleHolding(addr, count, values) != ESP_OK) {
       buildException(FC_WRITE_MULTIPLE, EX_SERVER_FAILURE, responsePdu);

@@ -46,6 +46,7 @@
             State _state;
             uint8_t _desiredPhases;
             bool _phaseSwitchRequested; // false while the boot sequence runs
+            bool _currentWrittenDuringSwitch; // evcc set the current for the new phase count
             bool _switchingSupported;
             bool _firmwareSupported;
             std::vector<uint16_t> _inputRegister;
