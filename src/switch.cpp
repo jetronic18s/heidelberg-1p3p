@@ -373,7 +373,6 @@ void PhaseSwitch::loop(){
     return;
   }
   else if (_state == State::Delay){
-    if (masterWriteHolding(HEC_REG_REMOTE_LOCK, 1) != ESP_OK) return;
     // After boot, never enable charging on our own: evcc notices the disabled
     // charger and enables it again with its own current.
     // After a phase switch, keep a disabled charger disabled and otherwise
@@ -386,6 +385,8 @@ void PhaseSwitch::loop(){
     }
     if (masterWriteHolding(HEC_REG_MAX_CURRENT, restartCurrent) != ESP_OK) return;
     cacheHolding(HEC_REG_MAX_CURRENT, &restartCurrent, 1);
+    // Release the remote lock only once the restart current is in place.
+    if (masterWriteHolding(HEC_REG_REMOTE_LOCK, 1) != ESP_OK) return;
 
     _phaseSwitchRequested = false;
     _state = State::Running;
