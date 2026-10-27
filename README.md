@@ -1,5 +1,14 @@
 # Phasenumschaltung für Heidelberg Energy Control
 
+> **Hinweis:** Dies ist ein Fork von [zivillian/heidelberg-1p3p](https://github.com/zivillian/heidelberg-1p3p).
+> Idee, Hardware-Aufbau und die Projektbeschreibung unten stammen von dort.
+> Unterschiede in diesem Fork:
+> - Firmware komplett auf **natives ESP-IDF** (5.5.6) umgestellt, ohne Arduino/PlatformIO
+> - **LAN (Ethernet)** auf dem Dingtian DT-R002 funktioniert, mit automatischem Wechsel auf WLAN bei Ausfall
+> - Update per **OTA**, Releases mit Versionsnummer, [Fehlercodes](#fehlercodes) für Sicherheitsabschaltungen
+>
+> Für die Phasenumschaltung braucht evcc weiterhin einen Patch ([modifizierte evcc Version](https://github.com/zivillian/evcc)), in das offizielle evcc wird er voraussichtlich nicht übernommen.
+
 ## Warum?
 
 Die Wallbox unterstützt von Hause aus keine automatische Umschaltung zwischen 1 und 3-Phasen Betrieb. Dabei kann die Wallbox sowohl 1 als auch 3-phasig angeschlossen werden. Um den Ertrag bei PV Überschussladen zu steigern, kann es insbesondere im Winter oder der Übergansgzeit hilfreich sein die Anzahl der Phasen je nach verfügbarer Leistung umzuschalten.
@@ -15,11 +24,6 @@ Beim Umschalten wird durch den ESP zuerst die Ladeleistung auf 0 reduziert und d
 ## Funktioniert das wirklich?
 
 Ich habe meinen Prototyp gebaut und mit meiner Wallbox getestet - das sieht sehr gut aus. Die Kommunikation zwischen EVCC und der Wallbox über den ESP funktioniert einwandfrei. Die manuelle Umschaltung über das Webinterface des ESP und über ein Modbus Register funktioniert mit und ohne Auto. Auch die Umschaltung über das evcc Webinterface und die automatische Umschaltung abhängig vom Überschuss funktioniert ([mit der modifizierten evcc Version](https://github.com/zivillian/evcc)) problemlos.
-
- Die nächsten Schritte sind:
-
-1. evcc Patch upstreamen
-1. *Party*
 
 ## Ethernet (Dingtian DT-R002)
 
