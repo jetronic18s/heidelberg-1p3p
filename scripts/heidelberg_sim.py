@@ -15,16 +15,24 @@ Behaviour:
   phases while unlocked and register 261 >= 6 A.
 - The energy counter is saved when the wallbox gets locked; a power loss
   falls back to the saved value, like the real Heidelberg.
+- Watchdog: without a Modbus request for register 257 ms (default 15 s) the
+  wallbox uses the failsafe current from register 262 (default 0 A) until
+  requests come again.
 
 Commands on stdin or on the control port (e.g. `echo car on | nc localhost 8502`):
   car on|off        connect or disconnect the car
   silent on|off     stop answering (simulates a dead wallbox)
   phases auto|1|3|0 power from the ESP32 feedback, or force 1p/3p/off
   pv <W> / house <W> set PV power and house load for --grid-file
-  status            print the current state
+  status            log the current state
+  json              reply with the current state as JSON (for scripts)
   quit              stop the simulator
+
+Every command on the control port is answered with one line ("ok", JSON or
+an error).
 """
 import argparse
+import json
 import os
 import re
 import socket
@@ -81,6 +89,9 @@ class Wallbox:
         self.pv_w = float(args.pv)
         self.house_w = float(args.house)
         self.power_w = 0.0
+        self.last_request = time.monotonic()
+        self.watchdog_tripped = False
+        self.energy_lost_wh = 0.0
 
     # state
 
@@ -94,7 +105,11 @@ class Wallbox:
         phases = self.phases()
         if phases != self.powered_phases:
             if self.powered_phases and not phases:
-                log(f"power off, energy counter falls back to {self.saved_energy_wh:.0f} Wh")
+                lost = self.energy_wh - self.saved_energy_wh
+                log(f"power off, energy counter falls back to {self.saved_energy_wh:.0f} Wh"
+                    + (f", {lost:.1f} Wh lost" if lost >= 0.5 else ""))
+                if lost >= 0.5:
+                    self.energy_lost_wh += lost
                 self.energy_wh = self.saved_energy_wh
             if not self.powered_phases and phases:
                 log(f"power on ({phases}p), answering in {self.args.boot_delay:.0f} s")
@@ -103,9 +118,19 @@ class Wallbox:
                 self.unlocked_at = None if self.holding[259] == 0 else now - self.args.unlock_delay
                 self.charge_allowed_at = None
                 self.energy_power_on_wh = 0.0
+                self.last_request = now + self.args.boot_delay
+                self.watchdog_tripped = False
             elif phases:
                 log(f"phases changed to {phases}p")
             self.powered_phases = phases
+        timeout = self.holding[257] / 1000
+        tripped = bool(self.powered_phases and timeout and now - self.last_request > timeout)
+        if tripped != self.watchdog_tripped:
+            if tripped:
+                log(f"watchdog timeout, failsafe current {self.holding[262] / 10:.1f} A")
+            else:
+                log("watchdog ok again")
+            self.watchdog_tripped = tripped
         currents = self.currents(now)
         power = sum(c * 230 for c in currents) / 10
         self.power_w = power
@@ -121,8 +146,12 @@ class Wallbox:
             return True
         return now - self.unlocked_at < self.args.unlock_delay
 
+    def max_current(self):
+        """Effective current limit in 0.1 A: the failsafe current after a watchdog timeout."""
+        return self.holding[262] if self.watchdog_tripped else self.holding[261]
+
     def charging(self, now):
-        if not self.car or self.locked(now) or self.holding[261] < MIN_CURRENT:
+        if not self.car or self.locked(now) or self.max_current() < MIN_CURRENT:
             self.charge_allowed_at = None
             return False
         if self.charge_allowed_at is None:
@@ -141,7 +170,7 @@ class Wallbox:
     def currents(self, now):
         if not self.powered_phases or not self.charging(now):
             return [0, 0, 0]
-        current = max(min(self.holding[261], self.args.car_max * 10) - 2, 0)
+        current = max(min(self.max_current(), self.args.car_max * 10) - 2, 0)
         return [current] * self.powered_phases + [0] * (3 - self.powered_phases)
 
     def input_registers(self):
@@ -198,6 +227,7 @@ class Wallbox:
             self.update()
             if not self.answering():
                 return None
+            self.last_request = time.monotonic()
             return self.handle_pdu(frame[0], frame[1:-2])
 
     def handle_pdu(self, slave, pdu):
@@ -233,7 +263,33 @@ class Wallbox:
 
     # control
 
+    def state(self):
+        """Current state as a dict, for scripts on the control port."""
+        self.update()
+        regs = self.input_registers()
+        return {
+            "powered_phases": self.powered_phases,
+            "answering": bool(self.answering()),
+            "car": self.car,
+            "silent": self.silent,
+            "status": regs[5],
+            "lock": self.holding[259],
+            "max_current": self.holding[261] / 10,
+            "watchdog_tripped": self.watchdog_tripped,
+            "seconds_since_request": round(time.monotonic() - self.last_request, 1),
+            "currents": [regs[i] / 10 for i in (6, 7, 8)],
+            "voltages": [regs[i] for i in (10, 11, 12)],
+            "power_w": round(self.power_w),
+            "energy_wh": round(self.energy_wh, 1),
+            "saved_energy_wh": round(self.saved_energy_wh, 1),
+            "energy_lost_wh": round(self.energy_lost_wh, 1),
+            "pv_w": self.pv_w,
+            "house_w": self.house_w,
+            "grid_w": round(self.grid_w()),
+        }
+
     def command(self, line):
+        """Run a control command. Returns the reply, or None to stop."""
         words = line.split()
         with self.lock:
             if words[:1] == ["car"] and words[1:] in (["on"], ["off"]):
@@ -249,18 +305,20 @@ class Wallbox:
                 setattr(self, f"{words[0]}_w", float(words[1]))
                 log(f"{words[0]} {words[1]} W")
             elif words == ["status"]:
-                self.update()
-                regs = self.input_registers()
-                log(f"powered={self.powered_phases}p answering={bool(self.answering())} "
-                    f"car={self.car} status={regs[5]} lock={self.holding[259]} "
-                    f"max={self.holding[261] / 10:.1f}A I={[regs[i] / 10 for i in (6, 7, 8)]} "
-                    f"energy={self.energy_wh:.0f}Wh saved={self.saved_energy_wh:.0f}Wh "
-                    f"grid={self.grid_w():.0f}W (house {self.house_w:.0f} + car {self.power_w:.0f} - pv {self.pv_w:.0f})")
+                st = self.state()
+                log(f"powered={st['powered_phases']}p answering={st['answering']} "
+                    f"car={st['car']} status={st['status']} lock={st['lock']} "
+                    f"max={st['max_current']:.1f}A I={st['currents']} "
+                    f"energy={st['energy_wh']:.0f}Wh saved={st['saved_energy_wh']:.0f}Wh "
+                    f"grid={st['grid_w']}W (house {self.house_w:.0f} + car {st['power_w']} - pv {self.pv_w:.0f})")
+            elif words == ["json"]:
+                return json.dumps(self.state())
             elif words == ["quit"]:
-                return False
+                return None
             elif words:
                 log(f"unknown command: {line.strip()}")
-        return True
+                return "error: unknown command"
+        return "ok"
 
 
 def request_length(buf):
@@ -350,10 +408,14 @@ def serve_control(box, port, stop):
     server = socket.create_server(("127.0.0.1", port))
     while True:
         conn, _ = server.accept()
-        with conn, conn.makefile("r") as lines:
-            for line in lines:
-                if not box.command(line):
+        with conn, conn.makefile("rw") as stream:
+            for line in stream:
+                reply = box.command(line)
+                if reply is None:
                     stop.set()
+                    break
+                stream.write(reply + "\n")
+                stream.flush()
 
 
 def main():
@@ -385,7 +447,7 @@ def main():
 
     def read_stdin():
         for line in sys.stdin:
-            if not box.command(line):
+            if box.command(line) is None:
                 break
         stop.set()
 
