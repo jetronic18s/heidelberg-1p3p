@@ -130,6 +130,8 @@ PhaseSwitch::PhaseSwitch()
   ,_restartRequested(false)
   ,_updateInProgress(false)
   ,_requestedPhases(0)
+  ,_lastBridgeRequestMs(0)
+  ,_evccTimeout(false)
   ,_restartDeadlineMs(0)
 {}
 
@@ -402,6 +404,8 @@ void PhaseSwitch::loop(){
       return;
     }
     
+    checkEvccWatchdog();
+
     // Update registers every 2 seconds
     static uint32_t last_update = 0;
     if (nowMs() - last_update > 2000) {
@@ -619,6 +623,25 @@ uint8_t PhaseSwitch::reportedPhases(){
   return requested ? requested : _desiredPhases;
 }
 
+// The ESP32 polls the wallbox every 2 s and so keeps the Heidelberg's own
+// watchdog (register 257) alive even when evcc is gone. Take over that
+// watchdog for evcc: without a Modbus TCP request for the register 257 time,
+// apply the failsafe current (register 262), as the wallbox would. evcc sets
+// its own current again when it comes back.
+void PhaseSwitch::checkEvccWatchdog(){
+  const uint32_t timeoutMs = _holdingRegister[HEC_REG_WATCHDOG - HOLDING_REG_OFFSET];
+  if (timeoutMs == 0 || _evccTimeout) return;
+  if (nowMs() - _lastBridgeRequestMs <= timeoutMs) return;
+
+  uint16_t failsafe = _holdingRegister[HEC_REG_FAILSAFE_CURRENT - HOLDING_REG_OFFSET];
+  if (failsafe < HEC_MIN_CURRENT) failsafe = 0; // 1..59 means 0 A for the Heidelberg
+  if (masterWriteHolding(HEC_REG_MAX_CURRENT, failsafe) != ESP_OK) return;
+  cacheHolding(HEC_REG_MAX_CURRENT, &failsafe, 1);
+  _evccTimeout = true;
+  ESP_LOGW(TAG, "no request from evcc for %u ms, failsafe current %u.%u A",
+           (unsigned)timeoutMs, failsafe / 10, failsafe % 10);
+}
+
 bool PhaseSwitch::canSwitchTo1P(){
   return _switchingSupported
     && _firmwareSupported
@@ -686,6 +709,9 @@ std::string PhaseSwitch::getState(){
     char hex[16];
     snprintf(hex, sizeof(hex), " [0x%04X]", _safetyFaultCode);
     result += hex;
+  }
+  if (_evccTimeout){
+    result += " [evcc timeout]";
   }
   if (_delay > 0){
     auto passed = nowMs() - _previous;
@@ -941,6 +967,12 @@ bool PhaseSwitch::handleModbusRequest(uint8_t unitId, const uint8_t* pdu, size_t
   if (unitId != _serverId) {
     buildException(fc, EX_GATEWAY_TARGET_FAILED, responsePdu);
     return true;
+  }
+
+  _lastBridgeRequestMs = nowMs();
+  if (_evccTimeout) {
+    _evccTimeout = false;
+    ESP_LOGI(TAG, "evcc is back");
   }
 
   switch (fc) {
