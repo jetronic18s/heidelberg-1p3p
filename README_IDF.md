@@ -210,6 +210,12 @@ bench/bench_test.py                        # all tests
   `[evcc timeout]` on the start page. evcc's Heidelberg driver reads register
   257 at startup and polls every 257/4 ms, independent of its control
   interval.
+- Wallbox silent in `Running` for 60 s (any failed RTU transaction counts,
+  any success resets): the start page shows `[wallbox not responding]`, the
+  status page a `Wallbox` row, and the bridge answers evcc with exception
+  0x0B without trying the RTU. No safety fault: with RS485 cut, the
+  Heidelberg's own watchdog has already stopped charging; everything resumes
+  when it answers again.
 - Before a software restart the cache is saved in RTC memory (magic + CRC)
   and restored after the restart, so evcc keeps getting cached values until
   the wallbox answers. After a power-on there is no cache; until the wallbox

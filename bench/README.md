@@ -236,15 +236,14 @@ known problem.
 | 18 | Mode off | evcc stops charging, wallbox max current 0 |
 | 19 | evcc restart | evcc process restarted while charging: takes over without errors |
 | 20 | evcc gone | evcc stopped while charging: within 30 s the board applies the failsafe current (0 A) and shows `[evcc timeout]`; charging resumes when evcc is back |
-| 21 | Wallbox dies while charging | known problem, see below |
+| 21 | Wallbox dies while charging | silent wallbox while charging: its watchdog stops charging, the board shows `[wallbox not responding]` after 60 s, charging resumes without reboot when it answers again |
 | 22 | Dead wallbox | silent wallbox after power-on: safety fault `0xE104`, recovery after a reboot |
 
 ### Known problems
 
-Found with the bench and not fixed yet:
-
-- **Test 21, wallbox dies while charging:** if the wallbox stops answering in
-  `Running`, the board has no safety fault; evcc only sees Modbus errors.
+None at the moment. Mark a test that fails because of a known, open problem
+with `@known_issue("...")` in `bench/bench_test.py`; it is then reported as
+`KNOWN` until the problem is fixed.
 
 ### Soak test
 
