@@ -107,6 +107,13 @@ class Bench:
         match = re.search(r"([13~])P (\w+)(?: \[(0x[0-9A-F]+)\])?", text)
         return match.groups() if match else None
 
+    def esp_text(self):
+        try:
+            with urllib.request.urlopen(self.esp + "/", timeout=3) as resp:
+                return re.sub(r"<[^>]*>", " ", resp.read().decode("utf-8", "replace"))
+        except OSError:
+            return None
+
     def esp_state(self):
         page = self.esp_page()
         return page[1] if page else None
@@ -365,7 +372,8 @@ def test_switch_while_disabled(b):
     b.mark_log()
     try:
         b.evcc_post("mode/off")
-        b.wait(lambda: not b.lp()["charging"], 30, "charging stopped")
+        # evcc's "charging" flag can lag behind; the current is what counts
+        b.wait(lambda: b.sim_state()["currents"] == [0, 0, 0], 30, "charging stopped")
         b.esp_write(4, 1)
         b.wait(lambda: b.sim_state()["powered_phases"] == 1 and b.esp_state() == "Running",
                120, "board on 1p and Running")
@@ -523,18 +531,19 @@ def test_evcc_restart(b):
     b.check_log(allowed=ALLOWED_ON_EVCC_START)
 
 
-@known_issue("the ESP32 polls the wallbox every 2 s and keeps its watchdog alive, "
-             "so the failsafe current never applies when evcc is gone")
 def test_evcc_down(b):
-    """evcc gone while charging: the wallbox falls back to its failsafe current"""
+    """evcc gone while charging: the board applies the failsafe current"""
     b.start_charging()
     b.evcc_stop()
     try:
-        b.wait(lambda: b.sim_state()["watchdog_tripped"], 45,
-               "wallbox watchdog timeout (failsafe current)")
-        b.wait(lambda: b.sim_state()["currents"] == [0, 0, 0], 15, "charging stopped")
+        # Register 257 is 15 s by default; the board checks with the loop.
+        b.wait(lambda: b.sim_state()["currents"] == [0, 0, 0], 30,
+               "charging stopped (failsafe current 0 A)")
+        if "evcc timeout" not in (b.esp_text() or ""):
+            raise TestFailure("the board does not show the evcc timeout")
     finally:
         b.evcc_start()
+    b.wait(lambda: b.charging(), 180, "evcc charging again")
 
 
 @known_issue("the ESP32 has no safety fault for a wallbox that stops answering in Running")
