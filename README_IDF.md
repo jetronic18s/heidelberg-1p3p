@@ -171,6 +171,39 @@ Notes:
 - For first runs, keep `--max-transport-errors` at `0`; increase only if your network is noisy.
 - Full wallbox checklist: `docs/MODBUS_TEST_PROTOCOL.md`.
 
+## Wallbox Simulator
+
+`scripts/heidelberg_sim.py` simulates a Heidelberg wallbox on a USB-RS485
+adapter, so the complete switching sequence can be tested on a bench board.
+It needs `pyserial` only.
+
+Bench wiring:
+- RS485 adapter A/B (and GND) to the board's RS485 terminals.
+- Each relay simulates a contactor with its auxiliary contact: relay 1 COM to
+  GND and NC to DI1 (1p feedback), relay 2 COM to GND and NC to DI2 (3p
+  feedback).
+- Disconnect the USB serial flasher: on Dingtian boards RS485 shares UART0.
+  Use Telnet debug for logs.
+
+```bash
+./scripts/heidelberg_sim.py --port /dev/ttyUSB0 --esp-url http://<DEVICE_IP>/ --verbose
+```
+
+The simulator polls the start page of the ESP32 and treats the wallbox as
+powered while a contactor feedback (`1P`/`3P`) is active. Control it on stdin
+or via the control port, e.g. as evcc would see it:
+
+```bash
+echo "car on" | nc -q1 localhost 8502                       # plug in the car
+mbpoll -m tcp -a 1 -0 -t 4 -r 261 -1 <DEVICE_IP> 100       # evcc sets 10 A
+mbpoll -m tcp -a 1 -0 -t 4 -r 4 -1 <DEVICE_IP> 3           # evcc switches to 3p
+echo status | nc -q1 localhost 8502
+```
+
+Other commands: `car off`, `silent on|off` (dead wallbox, e.g. for
+`0xE104`), `phases auto|0|1|3`, `quit`. Register defaults after power-on
+follow the Amperfied register description for layout 0x108.
+
 ## Ethernet/WiFi Handover Test
 
 - Boot with LAN plugged in: WiFi must stay off.
