@@ -236,7 +236,7 @@ known problem.
 | 18 | Mode off | evcc stops charging, wallbox max current 0 |
 | 19 | evcc restart | evcc process restarted while charging: takes over without errors |
 | 20 | evcc gone | evcc stopped while charging: within 30 s the board applies the failsafe current (0 A) and shows `[evcc timeout]`; charging resumes when evcc is back |
-| 21 | Wallbox dies while charging | silent wallbox while charging: its watchdog stops charging, the board shows `[wallbox not responding]` after 60 s, charging resumes without reboot when it answers again |
+| 21 | Wallbox dies while charging | silent wallbox while charging: its watchdog stops charging, the board shows `[wallbox not responding]` after 60 s, charging resumes without reboot when it answers again, the status page lists the outage |
 | 22 | Dead wallbox | silent wallbox after power-on: safety fault `0xE104`, recovery after a reboot |
 
 ### Known problems

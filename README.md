@@ -51,6 +51,15 @@ Selbst bauen, Versionierung, Release-Ablauf und Tests: siehe [README_IDF.md](REA
 
 Unter **Status** werden die Ethernet MAC und IP angezeigt (zusätzlich zu WiFi). Wenn WLAN oder LAN nicht aktiv sind, werden deren IP‑Felder leer gelassen. Zusätzlich wird angezeigt, ob WLAN‑Credentials gesetzt sind.
 
+Für die Fehlersuche zeigt die Statusseite außerdem:
+
+| Zeile | Beispiel | Bedeutung |
+| ----- | -------- | --------- |
+| `Wallbox` | `ok, last answer 0.5 s ago, 0/110 errors (last minute)` | Verbindung zur Wallbox (RS485): letzte Antwort, Fehler in der letzten Minute. Im Fehlerfall `not responding for 75 s (timeout)` |
+| `Wallbox history` | `1x not responding, last 3.5 h ago for 75 s; last error: timeout 2 min ago` | Ausfälle seit dem Start und der letzte Fehler. Ein `timeout` deutet eher auf Kabel oder ausgeschaltete Box hin, `CRC error` oder `invalid response` eher auf Störungen |
+| `Wallbox info` | `hardware current 6-16 A, software revision 105` | Drehschalter-Einstellung (Register 100/101) und Software-Revision der Wallbox (Register 203) |
+| `evcc` | `last request 2.8 s ago, 0 timeouts` | letzte Anfrage von evcc und wie oft der Watchdog den Failsafe-Strom gesetzt hat |
+
 ### DHCP vs. statische IP
 
 Unter **Config** kann zwischen DHCP und statischer IP gewechselt werden – sowohl für Ethernet als auch für WiFi. Für statische IP bitte `IP`, `Gateway`, `Netmask` und `DNS` eintragen. (WiFi-Änderungen werden nach einem Reboot zuverlässig aktiv.)
