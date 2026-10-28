@@ -546,17 +546,26 @@ def test_evcc_down(b):
     b.wait(lambda: b.charging(), 180, "evcc charging again")
 
 
-@known_issue("the ESP32 has no safety fault for a wallbox that stops answering in Running")
 def test_wallbox_dies(b):
-    """Wallbox stops answering while charging: the board reports a fault"""
+    """Wallbox stops answering while charging: reported, charging resumes after"""
     b.start_charging()
     b.sim("silent on")
     try:
-        b.wait(lambda: b.esp_fault() is not None, 90, "safety fault on the board")
+        # The wallbox's own watchdog stops charging after 15 s without requests.
+        b.wait(lambda: b.sim_state()["currents"] == [0, 0, 0], 30,
+               "charging stopped by the wallbox watchdog")
+        b.wait(lambda: "wallbox not responding" in (b.esp_text() or ""), 90,
+               "board reports the wallbox as not responding")
+        if b.esp_fault():
+            raise TestFailure(f"unexpected safety fault {b.esp_fault()}")
     finally:
         b.sim("silent off")
-        if b.esp_fault():
-            b.esp_reboot()
+    b.wait(lambda: "wallbox not responding" not in (b.esp_text() or "x"), 30,
+           "board reports the wallbox back")
+    b.wait(lambda: b.charging(), 180, "evcc charging again")
+    # Before the board gives up (60 s) evcc gets exception 4, afterwards 11.
+    b.check_log(allowed=[r"exception '4'", r"exception '11'", r"i/o timeout",
+                         r"charger out of sync"])
 
 
 def test_dead_wallbox(b):
@@ -583,9 +592,9 @@ TESTS = [
 ]
 
 # tests that end in a safety fault on purpose
-EXPECTS_FAULT = {test_dead_wallbox, test_wallbox_dies}
+EXPECTS_FAULT = {test_dead_wallbox}
 # a wallbox that does not answer cannot be locked before the power goes off
-EXPECTS_ENERGY_LOSS = {test_dead_wallbox, test_wallbox_dies}
+EXPECTS_ENERGY_LOSS = {test_dead_wallbox}
 
 
 def prepare(b):
