@@ -102,6 +102,8 @@ Quick run per firmware build:
    `./scripts/smoke_test.sh --port /dev/ttyUSB0 --monitor-seconds 20`
 3. Optional Modbus read checks against a running device:
    `./scripts/smoke_test.sh --host <DEVICE_IP>`
+4. Before a release: flash the bench board via OTA and run the bench tests,
+   `bench/bench_test.py` (see [Test Bench](#test-bench)).
 
 ## Debug Logging
 
@@ -171,38 +173,19 @@ Notes:
 - For first runs, keep `--max-transport-errors` at `0`; increase only if your network is noisy.
 - Full wallbox checklist: `docs/MODBUS_TEST_PROTOCOL.md`.
 
-## Wallbox Simulator
+## Test Bench
 
-`scripts/heidelberg_sim.py` simulates a Heidelberg wallbox on a USB-RS485
-adapter, so the complete switching sequence can be tested on a bench board.
-It needs `pyserial` only.
-
-Bench wiring:
-- RS485 adapter A/B (and GND) to the board's RS485 terminals.
-- Each relay simulates a contactor with its auxiliary contact: relay 1 COM to
-  GND and NC to DI1 (1p feedback), relay 2 COM to GND and NC to DI2 (3p
-  feedback).
-- Disconnect the USB serial flasher: on Dingtian boards RS485 shares UART0.
-  Use Telnet debug for logs.
+`bench/` contains a bench setup to test the firmware and new evcc versions
+without a real wallbox: a bench board, a Heidelberg simulator on a
+USB-RS485 adapter (`scripts/heidelberg_sim.py`), a local evcc instance, and
+automated tests (`bench/bench_test.py`). Wiring, setup, simulator commands,
+the test list and manual checks are described in [bench/README.md](bench/README.md).
 
 ```bash
-./scripts/heidelberg_sim.py --port /dev/ttyUSB0 --esp-url http://<DEVICE_IP>/ --verbose
+ESP_IP=<DEVICE_IP> bench/start.sh --init   # once: bench directory and evcc config
+bench/start.sh --background                # simulator + evcc
+bench/bench_test.py                        # all tests
 ```
-
-The simulator polls the start page of the ESP32 and treats the wallbox as
-powered while a contactor feedback (`1P`/`3P`) is active. Control it on stdin
-or via the control port, e.g. as evcc would see it:
-
-```bash
-echo "car on" | nc -q1 localhost 8502                       # plug in the car
-mbpoll -m tcp -a 1 -0 -t 4 -r 261 -1 <DEVICE_IP> 100       # evcc sets 10 A
-mbpoll -m tcp -a 1 -0 -t 4 -r 4 -1 <DEVICE_IP> 3           # evcc switches to 3p
-echo status | nc -q1 localhost 8502
-```
-
-Other commands: `car off`, `silent on|off` (dead wallbox, e.g. for
-`0xE104`), `phases auto|0|1|3`, `quit`. Register defaults after power-on
-follow the Amperfied register description for layout 0x108.
 
 ## Ethernet/WiFi Handover Test
 
@@ -216,6 +199,15 @@ follow the Amperfied register description for layout 0x108.
 - Ethernet setup currently relies on `ethernet_jl1101.*` and IDF ethernet APIs.
 - Modbus TCP bridge uses an IDF socket server (`ModbusTcpBridge`), not AsyncTCP.
 - RS485 RTU client uses an IDF UART-backed `Stream` adapter.
+- Outside `Running` (phase switch, restart) the bridge answers evcc from the
+  register cache: status A1 or B1 depending on whether a car was connected
+  before, currents, power and voltages 0. Writes go to the cache and are
+  applied when the switch completes.
+- Before a software restart the cache is saved in RTC memory (magic + CRC)
+  and restored after the restart, so evcc keeps getting cached values until
+  the wallbox answers. After a power-on there is no cache; until the wallbox
+  is detected the bridge answers Modbus exception 0x0B (gateway target
+  failed).
 
 ## Safety Fault Codes
 
