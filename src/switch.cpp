@@ -524,7 +524,7 @@ void PhaseSwitch::enterSafetyFault(uint16_t code, const char *text){
   writePin(PIN_3P_OUT, RELAY_OFF);
   _state = State::Fault;
 
-  ESP_LOGE(TAG, "SAFETY FAULT E%04X: %s", code, _safetyFaultText.c_str());
+  ESP_LOGE(TAG, "SAFETY FAULT 0x%04X: %s", code, _safetyFaultText.c_str());
 }
 
 bool PhaseSwitch::hasSafetyFault(){
@@ -553,7 +553,7 @@ std::string PhaseSwitch::getState(){
   }
   if (_safetyFaultCode != SAFETY_FAULT_NONE){
     char hex[16];
-    snprintf(hex, sizeof(hex), " [E%04X]", _safetyFaultCode);
+    snprintf(hex, sizeof(hex), " [0x%04X]", _safetyFaultCode);
     result += hex;
   }
   if (_delay > 0){
