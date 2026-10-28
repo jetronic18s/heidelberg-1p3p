@@ -20,10 +20,12 @@ Commands on stdin or on the control port (e.g. `echo car on | nc localhost 8502`
   car on|off        connect or disconnect the car
   silent on|off     stop answering (simulates a dead wallbox)
   phases auto|1|3|0 power from the ESP32 feedback, or force 1p/3p/off
+  pv <W> / house <W> set PV power and house load for --grid-file
   status            print the current state
   quit              stop the simulator
 """
 import argparse
+import os
 import re
 import socket
 import sys
@@ -76,6 +78,9 @@ class Wallbox:
         self.energy_power_on_wh = 0.0
         self.last_tick = time.monotonic()
         self.last_status = None
+        self.pv_w = float(args.pv)
+        self.house_w = float(args.house)
+        self.power_w = 0.0
 
     # state
 
@@ -103,6 +108,7 @@ class Wallbox:
             self.powered_phases = phases
         currents = self.currents(now)
         power = sum(c * 230 for c in currents) / 10
+        self.power_w = power
         self.energy_wh += power * dt / 3600
         self.energy_power_on_wh += power * dt / 3600
         status = self.status(now)
@@ -173,6 +179,9 @@ class Wallbox:
         if reg == 261 and value != old:
             log(f"max current {value / 10:.1f} A")
 
+    def grid_w(self):
+        return self.house_w + self.power_w - self.pv_w
+
     def answering(self):
         return (self.powered_phases and not self.silent
                 and time.monotonic() >= self.boot_until)
@@ -236,13 +245,17 @@ class Wallbox:
             elif words[:1] == ["phases"] and words[1:] in (["auto"], ["0"], ["1"], ["3"]):
                 self.forced_phases = None if words[1] == "auto" else int(words[1])
                 log(f"phases {words[1]}")
+            elif words[:1] in (["pv"], ["house"]) and len(words) == 2 and words[1].lstrip("-").isdigit():
+                setattr(self, f"{words[0]}_w", float(words[1]))
+                log(f"{words[0]} {words[1]} W")
             elif words == ["status"]:
                 self.update()
                 regs = self.input_registers()
                 log(f"powered={self.powered_phases}p answering={bool(self.answering())} "
                     f"car={self.car} status={regs[5]} lock={self.holding[259]} "
                     f"max={self.holding[261] / 10:.1f}A I={[regs[i] / 10 for i in (6, 7, 8)]} "
-                    f"energy={self.energy_wh:.0f}Wh saved={self.saved_energy_wh:.0f}Wh")
+                    f"energy={self.energy_wh:.0f}Wh saved={self.saved_energy_wh:.0f}Wh "
+                    f"grid={self.grid_w():.0f}W (house {self.house_w:.0f} + car {self.power_w:.0f} - pv {self.pv_w:.0f})")
             elif words == ["quit"]:
                 return False
             elif words:
@@ -321,6 +334,18 @@ def poll_esp(box, url):
         time.sleep(1)
 
 
+def write_grid(box, path):
+    """Write the simulated grid power for an evcc custom meter."""
+    while True:
+        with box.lock:
+            box.update()
+            grid = box.grid_w()
+        with open(path + ".tmp", "w") as f:
+            f.write(f"{grid:.0f}\n")
+        os.replace(path + ".tmp", path)
+        time.sleep(1)
+
+
 def serve_control(box, port, stop):
     server = socket.create_server(("127.0.0.1", port))
     while True:
@@ -344,12 +369,17 @@ def main():
     parser.add_argument("--energy", type=int, default=1000000, help="initial energy counter in Wh")
     parser.add_argument("--control-port", type=int, default=8502)
     parser.add_argument("--verbose", action="store_true", help="log every frame")
+    parser.add_argument("--grid-file", help="write the grid power (W) to this file for evcc")
+    parser.add_argument("--pv", type=int, default=0, help="initial PV power in W")
+    parser.add_argument("--house", type=int, default=500, help="initial house load in W")
     args = parser.parse_args()
 
     box = Wallbox(args)
     stop = threading.Event()
     threading.Thread(target=serve_rtu, args=(box, args.port), daemon=True).start()
     threading.Thread(target=serve_control, args=(box, args.control_port, stop), daemon=True).start()
+    if args.grid_file:
+        threading.Thread(target=write_grid, args=(box, args.grid_file), daemon=True).start()
     if args.esp_url:
         threading.Thread(target=poll_esp, args=(box, args.esp_url), daemon=True).start()
 
