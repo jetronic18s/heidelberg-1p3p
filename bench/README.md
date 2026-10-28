@@ -235,7 +235,7 @@ known problem.
 | 17 | House load spike | +1.5 kW house load: evcc lowers the current and raises it again |
 | 18 | Mode off | evcc stops charging, wallbox max current 0 |
 | 19 | evcc restart | evcc process restarted while charging: takes over without errors |
-| 20 | evcc gone | known problem, see below |
+| 20 | evcc gone | evcc stopped while charging: within 30 s the board applies the failsafe current (0 A) and shows `[evcc timeout]`; charging resumes when evcc is back |
 | 21 | Wallbox dies while charging | known problem, see below |
 | 22 | Dead wallbox | silent wallbox after power-on: safety fault `0xE104`, recovery after a reboot |
 
@@ -243,11 +243,6 @@ known problem.
 
 Found with the bench and not fixed yet:
 
-- **Test 20, evcc gone:** the Heidelberg watchdog (register 257, 15 s) should
-  fall back to the failsafe current (register 262, 0 A) when the Modbus
-  master stops talking. The ESP32 reads the wallbox every 2 s on its own,
-  which keeps the watchdog alive: the car keeps charging at the last current
-  while evcc is down.
 - **Test 21, wallbox dies while charging:** if the wallbox stops answering in
   `Running`, the board has no safety fault; evcc only sees Modbus errors.
 

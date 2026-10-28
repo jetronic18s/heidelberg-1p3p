@@ -203,6 +203,13 @@ bench/bench_test.py                        # all tests
   register cache: status A1 or B1 depending on whether a car was connected
   before, currents, power and voltages 0. Writes go to the cache and are
   applied when the switch completes.
+- evcc watchdog: the ESP32 polls the wallbox every 2 s and so keeps the
+  Heidelberg watchdog (register 257) alive. It takes over that watchdog for
+  the Modbus TCP side: without a request for the register 257 time it writes
+  the failsafe current (register 262) to register 261 and shows
+  `[evcc timeout]` on the start page. evcc's Heidelberg driver reads register
+  257 at startup and polls every 257/4 ms, independent of its control
+  interval.
 - Before a software restart the cache is saved in RTC memory (magic + CRC)
   and restored after the restart, so evcc keeps getting cached values until
   the wallbox answers. After a power-on there is no cache; until the wallbox

@@ -79,6 +79,12 @@ Damit werden die Debug-Logs parallel zur seriellen Konsole über Telnet ausgegeb
 
 Bei deaktiviertem Modbus wird Telnet-Debug automatisch deaktiviert.
 
+### Ausfall von evcc (Watchdog)
+
+Die Heidelberg hat einen Watchdog: Kommt für die Zeit aus Register 257 (Standard 15 s) keine Modbus-Anfrage, lädt sie nur noch mit dem Failsafe-Strom aus Register 262 (Standard 0 A, also kein Laden). Weil der ESP die Wallbox selbst alle 2 s abfragt, würde dieser Watchdog nie auslösen. Der ESP übernimmt ihn deshalb für evcc: Kommt von evcc so lange keine Anfrage, setzt er den Failsafe-Strom, und die Startseite zeigt `[evcc timeout]`. Sobald evcc wieder da ist, setzt es seinen Ladestrom selbst neu. evcc fragt im Normalbetrieb etwa alle 4 s an.
+
+Ein Neustart von evcc, der länger als 15 s dauert, unterbricht das Laden deshalb kurz.
+
 ## Fehlercodes
 
 Erkennt der ESP einen Sicherheitsfehler, schaltet er beide Schütze ab und geht in den Zustand `Fault`. Die Statusseite zeigt dann `Safety Fault Code` und `Safety Fault`. Der Fehler bleibt bis zum nächsten Neustart des ESP bestehen.
