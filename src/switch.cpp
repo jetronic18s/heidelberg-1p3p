@@ -54,12 +54,13 @@ static constexpr uint16_t HEC_STATUS_B1 = 4;
 // Register cache kept across a software restart (OTA, reboot button) in RTC
 // memory, so evcc gets the last known values until the wallbox answers again.
 // The contents are random after a power loss, hence the magic and the CRC.
-static constexpr uint32_t BOOT_CACHE_MAGIC = 0x48454331; // "HEC1"
+static constexpr uint32_t BOOT_CACHE_MAGIC = 0x48454332; // "HEC2"
 struct BootCache {
   uint32_t magic;
   uint16_t input[20];
   uint16_t holding[10];
   uint16_t reportedStatus;
+  uint8_t desiredPhases;
   uint32_t crc;
 };
 static RTC_NOINIT_ATTR BootCache s_bootCache;
@@ -148,8 +149,13 @@ void PhaseSwitch::loadBootCache(){
     _inputRegister.assign(s_bootCache.input, s_bootCache.input + 20);
     _holdingRegister.assign(s_bootCache.holding, s_bootCache.holding + 10);
     _reportedStatus = s_bootCache.reportedStatus;
+    // Boot with the phases from before the restart, as evcc expects them.
+    if (s_bootCache.desiredPhases == 1 || s_bootCache.desiredPhases == 3) {
+      _desiredPhases = s_bootCache.desiredPhases;
+    }
     _bootCacheValid = true;
-    ESP_LOGI(TAG, "restored register cache from before the restart, status %u", _reportedStatus);
+    ESP_LOGI(TAG, "restored register cache from before the restart, status %u, %up",
+             _reportedStatus, _desiredPhases);
   }
   s_bootCache.magic = 0;
 }
@@ -159,6 +165,7 @@ void PhaseSwitch::saveBootCache(){
   std::copy(_inputRegister.begin(), _inputRegister.end(), s_bootCache.input);
   std::copy(_holdingRegister.begin(), _holdingRegister.end(), s_bootCache.holding);
   s_bootCache.reportedStatus = _reportedStatus;
+  s_bootCache.desiredPhases = _desiredPhases;
   s_bootCache.magic = BOOT_CACHE_MAGIC;
   s_bootCache.crc = bootCacheCrc(s_bootCache);
 }
