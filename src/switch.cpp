@@ -128,6 +128,7 @@ PhaseSwitch::PhaseSwitch()
   ,_wallboxResponseDeadlineMs(0)
   ,_unlockDeadlineMs(0)
   ,_restartRequested(false)
+  ,_updateInProgress(false)
   ,_restartDeadlineMs(0)
 {}
 
@@ -189,9 +190,15 @@ void PhaseSwitch::rememberCarState(){
 }
 
 // Outside Running, evcc is served from the cache: during a phase switch, a
-// restart, and after a software restart until the wallbox answers.
+// restart, and after a software restart until the wallbox answers. Also
+// during an OTA upload: writing the flash stalls the Modbus RTU master.
 bool PhaseSwitch::servesFromCache(){
-  return (_firmwareSupported || _bootCacheValid) && _state != State::Running;
+  return (_firmwareSupported || _bootCacheValid)
+    && (_state != State::Running || _updateInProgress);
+}
+
+void PhaseSwitch::setUpdateInProgress(bool inProgress){
+  _updateInProgress = inProgress;
 }
 
 // After a power-on there is no cache yet. Until the wallbox answers, report it
@@ -1142,6 +1149,14 @@ bool PhaseSwitch::readCachedInput(uint16_t addr, uint16_t count, std::vector<uin
   if (addr < 4 || (size_t)addr + count > _inputRegister.size()) return false;
 
   values.resize(count);
+  // During an OTA upload in Running the car still charges: report the last
+  // values as they are.
+  if (_state == State::Running) {
+    for (uint16_t i = 0; i < count; i++) {
+      values[i] = _inputRegister[addr + i];
+    }
+    return true;
+  }
   for (uint16_t i = 0; i < count; i++) {
     uint16_t reg = addr + i;
     switch (reg) {

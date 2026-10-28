@@ -76,6 +76,7 @@
             uint32_t _wallboxResponseDeadlineMs;
             uint32_t _unlockDeadlineMs;
             std::atomic<bool> _restartRequested;
+            std::atomic<bool> _updateInProgress;
             uint32_t _restartDeadlineMs;
             void handleRestart();
             void rememberCarState();
@@ -119,6 +120,8 @@
             void setSwitchDelay(uint32_t delayMs);
             // Stop charging, then restart the ESP32 from the main loop.
             void requestRestart();
+            // Answer evcc from the cache while an OTA upload stalls Modbus RTU.
+            void setUpdateInProgress(bool inProgress);
             uint32_t getRtuMessageCount();
             uint32_t getRtuPendingRequestCount();
             uint32_t getRtuErrorCount();

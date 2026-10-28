@@ -673,6 +673,14 @@ static esp_err_t handleUpdatePost(httpd_req_t *req)
     sendText(req, "400 Bad Request", "OTA could not begin");
     return ESP_OK;
   }
+  // Erasing the partition in esp_ota_begin() already stalls Modbus RTU.
+  // The upload either ends in a restart or fails; on failure evcc is served
+  // by the wallbox again.
+  if (s_phase_switch) s_phase_switch->setUpdateInProgress(true);
+  struct UpdateGuard {
+    bool done = false;
+    ~UpdateGuard() { if (!done && s_phase_switch) s_phase_switch->setUpdateInProgress(false); }
+  } guard;
   esp_ota_handle_t otaHandle = 0;
   if (esp_ota_begin(updatePartition, OTA_SIZE_UNKNOWN, &otaHandle) != ESP_OK) {
     sendText(req, "400 Bad Request", "OTA could not begin");
@@ -709,6 +717,7 @@ static esp_err_t handleUpdatePost(httpd_req_t *req)
     return ESP_OK;
   }
 
+  guard.done = true;
   sendText(req, "200 OK", "Update successful. Rebooting...");
   scheduleRestart(500000);
   return ESP_OK;
