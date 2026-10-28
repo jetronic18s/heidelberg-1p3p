@@ -34,6 +34,8 @@ static constexpr uint32_t SWITCH_POWER_ON_SETTLE_MS = 7000;
 static constexpr uint32_t WALLBOX_RESPONSE_TIMEOUT_MS = 60000;
 static constexpr uint32_t RESTART_STOP_TIMEOUT_MS = 10000;
 static constexpr uint32_t UNLOCK_CONFIRM_TIMEOUT_MS = 15000;
+// A wallbox silent this long in Running is reported as not responding.
+static constexpr uint32_t WALLBOX_SILENT_TIMEOUT_MS = 60000;
 static constexpr uint16_t MODBUS_TCP_PORT = 502;
 static constexpr uint16_t MODBUS_TCP_MAX_PDU = 253;
 static constexpr uint32_t MODBUS_TCP_CLIENT_TIMEOUT_SEC = 5;
@@ -132,6 +134,9 @@ PhaseSwitch::PhaseSwitch()
   ,_requestedPhases(0)
   ,_lastBridgeRequestMs(0)
   ,_evccTimeout(false)
+  ,_lastWallboxOkMs(0)
+  ,_wallboxSilent(false)
+  ,_wallboxSilentSinceMs(0)
   ,_restartDeadlineMs(0)
 {}
 
@@ -253,6 +258,7 @@ esp_err_t PhaseSwitch::masterReadInput(uint16_t addr, uint16_t count, uint16_t* 
     esp_err_t err = mbc_master_send_request(_master_handle, &req, dest);
     _rtuPendingRequestCount--;
     _rtuMessageCount++;
+    noteRtuResult(err);
     if (err != ESP_OK) {
         _rtuErrorCount++;
         ESP_LOGE(TAG, "masterReadInput(addr=%u, count=%u) failed: 0x%x (%s)", addr, count, err, esp_err_to_name(err));
@@ -271,6 +277,7 @@ esp_err_t PhaseSwitch::masterReadHolding(uint16_t addr, uint16_t count, uint16_t
     esp_err_t err = mbc_master_send_request(_master_handle, &req, dest);
     _rtuPendingRequestCount--;
     _rtuMessageCount++;
+    noteRtuResult(err);
     if (err != ESP_OK) {
         _rtuErrorCount++;
         ESP_LOGE(TAG, "masterReadHolding(addr=%u, count=%u) failed: 0x%x (%s)", addr, count, err, esp_err_to_name(err));
@@ -289,6 +296,7 @@ esp_err_t PhaseSwitch::masterWriteHolding(uint16_t addr, uint16_t value) {
     esp_err_t err = mbc_master_send_request(_master_handle, &req, &value);
     _rtuPendingRequestCount--;
     _rtuMessageCount++;
+    noteRtuResult(err);
     if (err != ESP_OK) {
         _rtuErrorCount++;
         ESP_LOGE(TAG, "masterWriteHolding(addr=%u, val=%u) failed: 0x%x (%s)", addr, value, err, esp_err_to_name(err));
@@ -308,6 +316,7 @@ esp_err_t PhaseSwitch::masterWriteMultipleHolding(uint16_t addr, uint16_t count,
     esp_err_t err = mbc_master_send_request(_master_handle, &req, const_cast<uint16_t*>(values));
     _rtuPendingRequestCount--;
     _rtuMessageCount++;
+    noteRtuResult(err);
     if (err != ESP_OK) {
         _rtuErrorCount++;
         ESP_LOGE(TAG, "masterWriteMultipleHolding(addr=%u, count=%u) failed: 0x%x (%s)", addr, count, err, esp_err_to_name(err));
@@ -405,6 +414,7 @@ void PhaseSwitch::loop(){
     }
     
     checkEvccWatchdog();
+    checkWallboxSilent();
 
     // Update registers every 2 seconds
     static uint32_t last_update = 0;
@@ -523,12 +533,14 @@ void PhaseSwitch::loop(){
     uint16_t status;
     if (masterReadInput(5, 1, &status) == ESP_OK && status != 10) {
       ESP_LOGI(TAG, "unlock confirmed");
+      _lastWallboxOkMs = nowMs();
       _state = State::Running;
       return;
     }
     if (nowMs() > _unlockDeadlineMs) {
       ESP_LOGW(TAG, "timeout waiting for unlock, writing it again");
       masterWriteHolding(HEC_REG_REMOTE_LOCK, 1);
+      _lastWallboxOkMs = nowMs();
       _state = State::Running;
       return;
     }
@@ -642,6 +654,32 @@ void PhaseSwitch::checkEvccWatchdog(){
            (unsigned)timeoutMs, failsafe / 10, failsafe % 10);
 }
 
+void PhaseSwitch::noteRtuResult(esp_err_t err){
+  if (err != ESP_OK) return;
+  _lastWallboxOkMs = nowMs();
+  if (_wallboxSilent.exchange(false)) {
+    ESP_LOGI(TAG, "wallbox answers again");
+  }
+}
+
+// If the wallbox stops answering in Running (RS485 cut, wallbox hung), its
+// own watchdog stops charging after register 257 ms. No safety fault: report
+// it, answer evcc with "gateway target failed", and carry on as soon as the
+// wallbox answers again.
+void PhaseSwitch::checkWallboxSilent(){
+  if (_wallboxSilent) return;
+  if (nowMs() - _lastWallboxOkMs <= WALLBOX_SILENT_TIMEOUT_MS) return;
+  _wallboxSilent = true;
+  _wallboxSilentSinceMs = _lastWallboxOkMs;
+  ESP_LOGW(TAG, "wallbox not responding for %u s", (unsigned)(WALLBOX_SILENT_TIMEOUT_MS / 1000));
+}
+
+bool PhaseSwitch::isWallboxSilent(){ return _wallboxSilent; }
+
+uint32_t PhaseSwitch::wallboxSilentForMs(){
+  return _wallboxSilent ? nowMs() - _wallboxSilentSinceMs : 0;
+}
+
 bool PhaseSwitch::canSwitchTo1P(){
   return _switchingSupported
     && _firmwareSupported
@@ -709,6 +747,9 @@ std::string PhaseSwitch::getState(){
     char hex[16];
     snprintf(hex, sizeof(hex), " [0x%04X]", _safetyFaultCode);
     result += hex;
+  }
+  if (_wallboxSilent){
+    result += " [wallbox not responding]";
   }
   if (_evccTimeout){
     result += " [evcc timeout]";
@@ -1045,6 +1086,10 @@ bool PhaseSwitch::handleReadHolding(uint8_t, uint16_t addr, uint16_t count, std:
     return true;
   }
 
+  if (_wallboxSilent) {
+    buildException(FC_READ_HOLDING, EX_GATEWAY_TARGET_FAILED, responsePdu);
+    return true;
+  }
   std::vector<uint16_t> values(count);
   if (masterReadHolding(addr, count, values.data()) != ESP_OK) {
     buildException(FC_READ_HOLDING, EX_SERVER_FAILURE, responsePdu);
@@ -1071,6 +1116,10 @@ bool PhaseSwitch::handleReadInput(uint8_t, uint16_t addr, uint16_t count, std::v
     return true;
   }
 
+  if (_wallboxSilent) {
+    buildException(FC_READ_INPUT, EX_GATEWAY_TARGET_FAILED, responsePdu);
+    return true;
+  }
   std::vector<uint16_t> values(count);
   if (masterReadInput(addr, count, values.data()) != ESP_OK) {
     buildException(FC_READ_INPUT, EX_SERVER_FAILURE, responsePdu);
@@ -1110,6 +1159,9 @@ bool PhaseSwitch::handleWriteHolding(uint8_t, uint16_t addr, uint16_t value, std
     if (_phaseSwitchRequested && addr == HEC_REG_MAX_CURRENT) {
       _currentWrittenDuringSwitch = true;
     }
+  } else if (_wallboxSilent) {
+    buildException(FC_WRITE_HOLDING, EX_GATEWAY_TARGET_FAILED, responsePdu);
+    return true;
   } else {
     if (masterWriteHolding(addr, value) != ESP_OK) {
       buildException(FC_WRITE_HOLDING, EX_SERVER_FAILURE, responsePdu);
@@ -1140,6 +1192,9 @@ bool PhaseSwitch::handleWriteMultiple(uint8_t, uint16_t addr, uint16_t count, co
     if (_phaseSwitchRequested && addr <= HEC_REG_MAX_CURRENT && HEC_REG_MAX_CURRENT < addr + count) {
       _currentWrittenDuringSwitch = true;
     }
+  } else if (_wallboxSilent) {
+    buildException(FC_WRITE_MULTIPLE, EX_GATEWAY_TARGET_FAILED, responsePdu);
+    return true;
   } else {
     if (masterWriteMultipleHolding(addr, count, values) != ESP_OK) {
       buildException(FC_WRITE_MULTIPLE, EX_SERVER_FAILURE, responsePdu);

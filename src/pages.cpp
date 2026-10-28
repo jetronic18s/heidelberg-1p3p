@@ -395,6 +395,14 @@ static esp_err_t handleStatusGet(httpd_req_t *req)
   sendTableRow(body, "RTU Messages", s_phase_switch->getRtuMessageCount());
   sendTableRow(body, "RTU Pending Messages", s_phase_switch->getRtuPendingRequestCount());
   sendTableRow(body, "RTU Errors", s_phase_switch->getRtuErrorCount());
+  if (s_phase_switch->isWallboxSilent()) {
+    char silent[48];
+    snprintf(silent, sizeof(silent), "not responding for %u s",
+             (unsigned)(s_phase_switch->wallboxSilentForMs() / 1000));
+    sendTableRow(body, "Wallbox", silent);
+  } else {
+    sendTableRow(body, "Wallbox", "ok");
+  }
   sendTableRow(body, "Bridge Message", s_phase_switch->getBridgeMessageCount());
   sendTableRow(body, "Bridge Clients", s_phase_switch->getBridgeActiveClientCount());
   sendTableRow(body, "Bridge Errors", s_phase_switch->getBridgeErrorCount());

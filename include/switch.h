@@ -82,11 +82,16 @@
             std::atomic<uint8_t> _requestedPhases; // phases requested outside Running, 0 = none
             std::atomic<uint32_t> _lastBridgeRequestMs; // last Modbus TCP request (evcc)
             std::atomic<bool> _evccTimeout; // failsafe current applied, evcc silent
+            std::atomic<uint32_t> _lastWallboxOkMs; // last successful Modbus RTU transaction
+            std::atomic<bool> _wallboxSilent; // wallbox not answering in Running
+            uint32_t _wallboxSilentSinceMs;
             uint32_t _restartDeadlineMs;
             void handleRestart();
             void requestPhases(uint8_t phases);
             uint8_t reportedPhases();
             void checkEvccWatchdog();
+            void checkWallboxSilent();
+            void noteRtuResult(esp_err_t err);
             void rememberCarState();
             void saveBootCache();
             void loadBootCache();
@@ -130,6 +135,8 @@
             void requestRestart();
             // Answer evcc from the cache while an OTA upload stalls Modbus RTU.
             void setUpdateInProgress(bool inProgress);
+            bool isWallboxSilent();
+            uint32_t wallboxSilentForMs();
             uint32_t getRtuMessageCount();
             uint32_t getRtuPendingRequestCount();
             uint32_t getRtuErrorCount();
