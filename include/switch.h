@@ -85,6 +85,15 @@
             std::atomic<uint32_t> _lastWallboxOkMs; // last successful Modbus RTU transaction
             std::atomic<bool> _wallboxSilent; // wallbox not answering in Running
             uint32_t _wallboxSilentSinceMs;
+            // wallbox and evcc diagnostics for the status page
+            std::atomic<uint32_t> _rtuWindowStartMs, _rtuWindowMsgs, _rtuWindowErrs;
+            std::atomic<uint32_t> _rtuPrevMsgs, _rtuPrevErrs;
+            std::atomic<bool> _rtuPrevValid;
+            std::atomic<esp_err_t> _lastRtuError;
+            std::atomic<uint32_t> _lastRtuErrorMs;
+            uint32_t _wallboxOutages, _lastOutageEndMs, _lastOutageMs;
+            uint32_t _evccTimeouts;
+            uint16_t _hwMaxCurrent, _hwMinCurrent, _swRevision;
             uint32_t _restartDeadlineMs;
             void handleRestart();
             void requestPhases(uint8_t phases);
@@ -137,6 +146,10 @@
             void setUpdateInProgress(bool inProgress);
             bool isWallboxSilent();
             uint32_t wallboxSilentForMs();
+            std::string wallboxStatusText();
+            std::string wallboxHistoryText();
+            std::string wallboxInfoText();
+            std::string evccStatusText();
             uint32_t getRtuMessageCount();
             uint32_t getRtuPendingRequestCount();
             uint32_t getRtuErrorCount();

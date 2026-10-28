@@ -137,6 +137,21 @@ PhaseSwitch::PhaseSwitch()
   ,_lastWallboxOkMs(0)
   ,_wallboxSilent(false)
   ,_wallboxSilentSinceMs(0)
+  ,_rtuWindowStartMs(0)
+  ,_rtuWindowMsgs(0)
+  ,_rtuWindowErrs(0)
+  ,_rtuPrevMsgs(0)
+  ,_rtuPrevErrs(0)
+  ,_rtuPrevValid(false)
+  ,_lastRtuError(ESP_OK)
+  ,_lastRtuErrorMs(0)
+  ,_wallboxOutages(0)
+  ,_lastOutageEndMs(0)
+  ,_lastOutageMs(0)
+  ,_evccTimeouts(0)
+  ,_hwMaxCurrent(0)
+  ,_hwMinCurrent(0)
+  ,_swRevision(0)
   ,_restartDeadlineMs(0)
 {}
 
@@ -650,14 +665,33 @@ void PhaseSwitch::checkEvccWatchdog(){
   if (masterWriteHolding(HEC_REG_MAX_CURRENT, failsafe) != ESP_OK) return;
   cacheHolding(HEC_REG_MAX_CURRENT, &failsafe, 1);
   _evccTimeout = true;
+  _evccTimeouts++;
   ESP_LOGW(TAG, "no request from evcc for %u ms, failsafe current %u.%u A",
            (unsigned)timeoutMs, failsafe / 10, failsafe % 10);
 }
 
 void PhaseSwitch::noteRtuResult(esp_err_t err){
-  if (err != ESP_OK) return;
-  _lastWallboxOkMs = nowMs();
+  const uint32_t now = nowMs();
+  // error rate per minute: the last complete minute is shown
+  if (now - _rtuWindowStartMs >= 60000) {
+    _rtuPrevMsgs = _rtuWindowMsgs.load();
+    _rtuPrevErrs = _rtuWindowErrs.load();
+    _rtuPrevValid = _rtuWindowStartMs != 0;
+    _rtuWindowMsgs = 0;
+    _rtuWindowErrs = 0;
+    _rtuWindowStartMs = now;
+  }
+  _rtuWindowMsgs++;
+  if (err != ESP_OK) {
+    _rtuWindowErrs++;
+    _lastRtuError = err;
+    _lastRtuErrorMs = now;
+    return;
+  }
+  _lastWallboxOkMs = now;
   if (_wallboxSilent.exchange(false)) {
+    _lastOutageMs = now - _wallboxSilentSinceMs;
+    _lastOutageEndMs = now;
     ESP_LOGI(TAG, "wallbox answers again");
   }
 }
@@ -669,8 +703,9 @@ void PhaseSwitch::noteRtuResult(esp_err_t err){
 void PhaseSwitch::checkWallboxSilent(){
   if (_wallboxSilent) return;
   if (nowMs() - _lastWallboxOkMs <= WALLBOX_SILENT_TIMEOUT_MS) return;
-  _wallboxSilent = true;
   _wallboxSilentSinceMs = _lastWallboxOkMs;
+  _wallboxOutages++;
+  _wallboxSilent = true;
   ESP_LOGW(TAG, "wallbox not responding for %u s", (unsigned)(WALLBOX_SILENT_TIMEOUT_MS / 1000));
 }
 
@@ -678,6 +713,78 @@ bool PhaseSwitch::isWallboxSilent(){ return _wallboxSilent; }
 
 uint32_t PhaseSwitch::wallboxSilentForMs(){
   return _wallboxSilent ? nowMs() - _wallboxSilentSinceMs : 0;
+}
+
+// "1.2 s", "14 min", "3.5 h"
+static std::string formatDuration(uint32_t ms)
+{
+  char buf[24];
+  if (ms < 60000) snprintf(buf, sizeof(buf), "%u.%u s", (unsigned)(ms / 1000), (unsigned)(ms % 1000 / 100));
+  else if (ms < 3600000) snprintf(buf, sizeof(buf), "%u min", (unsigned)(ms / 60000));
+  else snprintf(buf, sizeof(buf), "%u.%u h", (unsigned)(ms / 3600000), (unsigned)(ms % 3600000 / 360000));
+  return buf;
+}
+
+static const char *rtuErrorName(esp_err_t err)
+{
+  switch (err) {
+    case ESP_ERR_TIMEOUT: return "timeout";
+    case ESP_ERR_INVALID_RESPONSE: return "invalid response";
+    case ESP_ERR_INVALID_CRC: return "CRC error";
+    default: return esp_err_to_name(err);
+  }
+}
+
+std::string PhaseSwitch::wallboxStatusText(){
+  const uint32_t now = nowMs();
+  if (_wallboxSilent) {
+    return "not responding for " + formatDuration(now - _wallboxSilentSinceMs)
+      + " (" + rtuErrorName(_lastRtuError) + ")";
+  }
+  if (_lastWallboxOkMs == 0) return "not detected yet";
+  std::string text = "ok, last answer " + formatDuration(now - _lastWallboxOkMs) + " ago";
+  const bool prev = _rtuPrevValid;
+  const uint32_t msgs = prev ? _rtuPrevMsgs : _rtuWindowMsgs;
+  const uint32_t errs = prev ? _rtuPrevErrs : _rtuWindowErrs;
+  text += ", " + std::to_string(errs) + "/" + std::to_string(msgs) + " errors ("
+    + (prev ? "last minute" : "since " + formatDuration(now - _rtuWindowStartMs)) + ")";
+  return text;
+}
+
+std::string PhaseSwitch::wallboxHistoryText(){
+  std::string text;
+  const uint32_t outages = _wallboxOutages;
+  if (outages == 0) {
+    text = "no outages";
+  } else {
+    text = std::to_string(outages) + "x not responding";
+    if (_lastOutageEndMs) {
+      text += ", last " + formatDuration(nowMs() - _lastOutageEndMs) + " ago for "
+        + formatDuration(_lastOutageMs);
+    }
+  }
+  if (_lastRtuErrorMs) {
+    text += "; last error: " + std::string(rtuErrorName(_lastRtuError)) + " "
+      + formatDuration(nowMs() - _lastRtuErrorMs) + " ago";
+  }
+  return text;
+}
+
+std::string PhaseSwitch::evccStatusText(){
+  const uint32_t last = _lastBridgeRequestMs;
+  if (last == 0) return "no request yet";
+  std::string text = "last request " + formatDuration(nowMs() - last) + " ago, "
+    + std::to_string(_evccTimeouts) + " timeouts";
+  if (_evccTimeout) text += ", failsafe current active";
+  return text;
+}
+
+std::string PhaseSwitch::wallboxInfoText(){
+  if (_hwMaxCurrent == 0) return "unknown";
+  std::string text = "hardware current " + std::to_string(_hwMinCurrent) + "-"
+    + std::to_string(_hwMaxCurrent) + " A";
+  if (_swRevision) text += ", software revision " + std::to_string(_swRevision);
+  return text;
 }
 
 bool PhaseSwitch::canSwitchTo1P(){
@@ -806,6 +913,14 @@ bool PhaseSwitch::validateSetup(){
           // A wallbox that was not locked before losing power reports the
           // real car state right after power-on.
           rememberCarState();
+          // Static wallbox data for the status page; optional registers.
+          uint16_t hw[2];
+          if (masterReadInput(100, 2, hw) == ESP_OK) {
+            _hwMaxCurrent = hw[0];
+            _hwMinCurrent = hw[1];
+          }
+          uint16_t revision;
+          if (masterReadInput(203, 1, &revision) == ESP_OK) _swRevision = revision;
         }
       }
     }
