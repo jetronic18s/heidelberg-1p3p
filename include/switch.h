@@ -51,6 +51,8 @@
             bool _currentWrittenDuringSwitch; // evcc set the current for the new phase count
             bool _switchingSupported;
             bool _firmwareSupported;
+            bool _bootCacheValid; // cache restored from before a software restart
+            uint16_t _reportedStatus; // charging state reported outside Running
             std::vector<uint16_t> _inputRegister;
             std::vector<uint16_t> _holdingRegister;
             uint32_t _switchDelay;
@@ -76,6 +78,12 @@
             std::atomic<bool> _restartRequested;
             uint32_t _restartDeadlineMs;
             void handleRestart();
+            void rememberCarState();
+            void saveBootCache();
+            void loadBootCache();
+            [[noreturn]] void restartNow();
+            bool servesFromCache();
+            bool waitingForWallbox();
             void enterSafetyFault(uint16_t code, const char *text);
             bool hasSafetyFault();
             

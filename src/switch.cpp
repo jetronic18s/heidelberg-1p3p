@@ -1,4 +1,5 @@
 #include "switch.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
@@ -7,6 +8,8 @@
 #include "driver/uart.h"
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "esp_attr.h"
+#include "esp_rom_crc.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -44,6 +47,28 @@ static constexpr uint8_t EX_ILLEGAL_DATA_VALUE = 3;
 static constexpr uint8_t EX_SERVER_FAILURE = 4;
 static constexpr uint8_t EX_GATEWAY_TARGET_FAILED = 11;
 
+// Charging states (input register 5) reported to evcc outside Running.
+static constexpr uint16_t HEC_STATUS_A1 = 2;
+static constexpr uint16_t HEC_STATUS_B1 = 4;
+
+// Register cache kept across a software restart (OTA, reboot button) in RTC
+// memory, so evcc gets the last known values until the wallbox answers again.
+// The contents are random after a power loss, hence the magic and the CRC.
+static constexpr uint32_t BOOT_CACHE_MAGIC = 0x48454331; // "HEC1"
+struct BootCache {
+  uint32_t magic;
+  uint16_t input[20];
+  uint16_t holding[10];
+  uint16_t reportedStatus;
+  uint32_t crc;
+};
+static RTC_NOINIT_ATTR BootCache s_bootCache;
+
+static uint32_t bootCacheCrc(const BootCache &cache)
+{
+  return esp_rom_crc32_le(0, (const uint8_t *)&cache, offsetof(BootCache, crc));
+}
+
 struct TcpClientContext {
   PhaseSwitch *phaseSwitch;
   int fd;
@@ -80,6 +105,8 @@ PhaseSwitch::PhaseSwitch()
   ,_currentWrittenDuringSwitch(false)
   ,_switchingSupported(false)
   ,_firmwareSupported(false)
+  ,_bootCacheValid(false)
+  ,_reportedStatus(HEC_STATUS_B1)
   ,_inputRegister(20, 0)
   ,_holdingRegister(10, 0)
   ,_switchDelay(120000)
@@ -110,6 +137,61 @@ void PhaseSwitch::begin(){
   writePin(PIN_3P_OUT, RELAY_OFF);
   pinModeInput(PIN_1P_IN);
   pinModeInput(PIN_3P_IN);
+  loadBootCache();
+}
+
+void PhaseSwitch::loadBootCache(){
+  const bool valid = esp_reset_reason() == ESP_RST_SW
+    && s_bootCache.magic == BOOT_CACHE_MAGIC
+    && s_bootCache.crc == bootCacheCrc(s_bootCache);
+  if (valid) {
+    _inputRegister.assign(s_bootCache.input, s_bootCache.input + 20);
+    _holdingRegister.assign(s_bootCache.holding, s_bootCache.holding + 10);
+    _reportedStatus = s_bootCache.reportedStatus;
+    _bootCacheValid = true;
+    ESP_LOGI(TAG, "restored register cache from before the restart, status %u", _reportedStatus);
+  }
+  s_bootCache.magic = 0;
+}
+
+void PhaseSwitch::saveBootCache(){
+  if (!_firmwareSupported && !_bootCacheValid) return;
+  std::copy(_inputRegister.begin(), _inputRegister.end(), s_bootCache.input);
+  std::copy(_holdingRegister.begin(), _holdingRegister.end(), s_bootCache.holding);
+  s_bootCache.reportedStatus = _reportedStatus;
+  s_bootCache.magic = BOOT_CACHE_MAGIC;
+  s_bootCache.crc = bootCacheCrc(s_bootCache);
+}
+
+void PhaseSwitch::restartNow(){
+  saveBootCache();
+  esp_restart();
+}
+
+// Remember whether a car was connected before leaving Running. Outside Running
+// the wallbox is locked or off and does not tell; reporting the old state
+// avoids a phantom "car connected" in evcc. Errors and "locked" keep the
+// previous guess.
+void PhaseSwitch::rememberCarState(){
+  const uint16_t status = _inputRegister[5];
+  if (status == 2 || status == 3) {
+    _reportedStatus = HEC_STATUS_A1;
+  } else if (status >= 4 && status <= 8) {
+    _reportedStatus = HEC_STATUS_B1;
+  }
+}
+
+// Outside Running, evcc is served from the cache: during a phase switch, a
+// restart, and after a software restart until the wallbox answers.
+bool PhaseSwitch::servesFromCache(){
+  return (_firmwareSupported || _bootCacheValid) && _state != State::Running;
+}
+
+// After a power-on there is no cache yet. Until the wallbox answers, report it
+// as unreachable instead of passing through errors or values of a wallbox
+// that is still booting.
+bool PhaseSwitch::waitingForWallbox(){
+  return _switchingSupported && !_firmwareSupported && !_bootCacheValid;
 }
 
 void PhaseSwitch::beginModbus(){
@@ -435,9 +517,10 @@ void PhaseSwitch::handleRestart(){
   if (_state != State::Restarting) {
     // Outside Running and Unlocking the current is already 0 or the wallbox is off.
     const bool mayCharge = _state == State::Running || _state == State::Unlocking;
+    if (_state == State::Running) rememberCarState();
     if (!mayCharge || !_master_handle || hasSafetyFault()) {
       ESP_LOGI(TAG, "restarting");
-      esp_restart();
+      restartNow();
     }
     _state = State::Restarting;
     _restartDeadlineMs = nowMs() + RESTART_STOP_TIMEOUT_MS;
@@ -445,7 +528,7 @@ void PhaseSwitch::handleRestart(){
     _delay = 0;
     if (masterWriteHolding(HEC_REG_MAX_CURRENT, 0) != ESP_OK) {
       ESP_LOGW(TAG, "restarting, could not stop charging");
-      esp_restart();
+      restartNow();
     }
     // Lock the wallbox like a phase switch does: the Heidelberg keeps its
     // energy counter across the power loss only once it is locked.
@@ -464,16 +547,17 @@ void PhaseSwitch::handleRestart(){
     && data[0] == 10 && data[1] == 0 && data[2] == 0 && data[3] == 0;
   if (stopped) {
     ESP_LOGI(TAG, "lock and zero current confirmed, restarting");
-    esp_restart();
+    restartNow();
   }
   if ((int32_t)(nowMs() - _restartDeadlineMs) > 0) {
     ESP_LOGW(TAG, "timeout waiting for lock and zero current, restarting");
-    esp_restart();
+    restartNow();
   }
 }
 
 void PhaseSwitch::switchTo1P(){
   if (!canSwitchTo1P()) return;
+  rememberCarState();
   _desiredPhases = 1;
   _phaseSwitchRequested = true;
   _currentWrittenDuringSwitch = false;
@@ -482,6 +566,7 @@ void PhaseSwitch::switchTo1P(){
 
 void PhaseSwitch::switchTo3P(){
   if (!canSwitchTo3P()) return;
+  rememberCarState();
   _desiredPhases = 3;
   _phaseSwitchRequested = true;
   _currentWrittenDuringSwitch = false;
@@ -863,7 +948,11 @@ bool PhaseSwitch::handleReadHolding(uint8_t, uint16_t addr, uint16_t count, std:
     return true;
   }
 
-  if (_firmwareSupported && _state != State::Running) {
+  if (waitingForWallbox()) {
+    buildException(FC_READ_HOLDING, EX_GATEWAY_TARGET_FAILED, responsePdu);
+    return true;
+  }
+  if (servesFromCache()) {
     std::vector<uint16_t> values;
     if (!readCachedHolding(addr, count, values)) {
       buildException(FC_READ_HOLDING, EX_ILLEGAL_DATA_ADDRESS, responsePdu);
@@ -885,7 +974,11 @@ bool PhaseSwitch::handleReadHolding(uint8_t, uint16_t addr, uint16_t count, std:
 
 bool PhaseSwitch::handleReadInput(uint8_t, uint16_t addr, uint16_t count, std::vector<uint8_t>& responsePdu)
 {
-  if (_firmwareSupported && _state != State::Running) {
+  if (waitingForWallbox()) {
+    buildException(FC_READ_INPUT, EX_GATEWAY_TARGET_FAILED, responsePdu);
+    return true;
+  }
+  if (servesFromCache()) {
     std::vector<uint16_t> values;
     if (!readCachedInput(addr, count, values)) {
       buildException(FC_READ_INPUT, EX_ILLEGAL_DATA_ADDRESS, responsePdu);
@@ -922,8 +1015,12 @@ bool PhaseSwitch::handleWriteHolding(uint8_t, uint16_t addr, uint16_t value, std
     return true;
   }
 
+  if (waitingForWallbox()) {
+    buildException(FC_WRITE_HOLDING, EX_GATEWAY_TARGET_FAILED, responsePdu);
+    return true;
+  }
   // While Unlocking the wallbox answers again; only reads still come from the cache.
-  if (_firmwareSupported && _state != State::Running && _state != State::Unlocking) {
+  if (servesFromCache() && _state != State::Unlocking) {
     if (addr < HOLDING_REG_OFFSET || (addr - HOLDING_REG_OFFSET) >= _holdingRegister.size()) {
       buildException(FC_WRITE_HOLDING, EX_ILLEGAL_DATA_ADDRESS, responsePdu);
       return true;
@@ -948,8 +1045,12 @@ bool PhaseSwitch::handleWriteHolding(uint8_t, uint16_t addr, uint16_t value, std
 
 bool PhaseSwitch::handleWriteMultiple(uint8_t, uint16_t addr, uint16_t count, const uint16_t* values, std::vector<uint8_t>& responsePdu)
 {
+  if (waitingForWallbox()) {
+    buildException(FC_WRITE_MULTIPLE, EX_GATEWAY_TARGET_FAILED, responsePdu);
+    return true;
+  }
   // While Unlocking the wallbox answers again; only reads still come from the cache.
-  if (_firmwareSupported && _state != State::Running && _state != State::Unlocking) {
+  if (servesFromCache() && _state != State::Unlocking) {
     if (addr < HOLDING_REG_OFFSET || (addr - HOLDING_REG_OFFSET + count) > _holdingRegister.size()) {
       buildException(FC_WRITE_MULTIPLE, EX_ILLEGAL_DATA_ADDRESS, responsePdu);
       return true;
@@ -1033,11 +1134,12 @@ bool PhaseSwitch::readCachedInput(uint16_t addr, uint16_t count, std::vector<uin
     uint16_t reg = addr + i;
     switch (reg) {
       case 5:
-        values[i] = 4; // B1: connected, not charging, as seen by evcc during switching.
+        values[i] = _reportedStatus; // A1 or B1: not charging, car as before the interruption.
         break;
-      case 6: case 7: case 8: // L1-L3 current
-      case 14:                // power
-        values[i] = 0; // cached values predate the switch; the car draws nothing now.
+      case 6: case 7: case 8:    // L1-L3 current
+      case 10: case 11: case 12: // L1-L3 voltage
+      case 14:                   // power
+        values[i] = 0; // cached values predate the interruption; the wallbox is locked or off now.
         break;
       default:
         values[i] = _inputRegister[reg];
