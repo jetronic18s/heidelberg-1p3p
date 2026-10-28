@@ -688,7 +688,12 @@ bool PhaseSwitch::validateSetup(){
     uint16_t layout;
     if (masterReadInput(4, 1, &layout) == ESP_OK){
       if (layout == 0x108){
-        if (updateCachedRegisters()) _firmwareSupported = true;
+        if (updateCachedRegisters()) {
+          _firmwareSupported = true;
+          // A wallbox that was not locked before losing power reports the
+          // real car state right after power-on.
+          rememberCarState();
+        }
       }
     }
   }
