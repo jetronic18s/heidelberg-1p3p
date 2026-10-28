@@ -129,6 +129,7 @@ PhaseSwitch::PhaseSwitch()
   ,_unlockDeadlineMs(0)
   ,_restartRequested(false)
   ,_updateInProgress(false)
+  ,_requestedPhases(0)
   ,_restartDeadlineMs(0)
 {}
 
@@ -166,7 +167,7 @@ void PhaseSwitch::saveBootCache(){
   std::copy(_inputRegister.begin(), _inputRegister.end(), s_bootCache.input);
   std::copy(_holdingRegister.begin(), _holdingRegister.end(), s_bootCache.holding);
   s_bootCache.reportedStatus = _reportedStatus;
-  s_bootCache.desiredPhases = _desiredPhases;
+  s_bootCache.desiredPhases = reportedPhases(); // a pending request wins
   s_bootCache.magic = BOOT_CACHE_MAGIC;
   s_bootCache.crc = bootCacheCrc(s_bootCache);
 }
@@ -387,6 +388,19 @@ void PhaseSwitch::loop(){
       enterSafetyFault(SAFETY_FAULT_RUNNING_FEEDBACK_INVALID, "invalid contactor feedback while running");
       return;
     }
+
+    // A phase request that came in while not Running.
+    const uint8_t requested = _requestedPhases.exchange(0);
+    if (requested == 1 && _desiredPhases != 1) {
+      ESP_LOGI(TAG, "running the pending switch to 1p");
+      switchTo1P();
+      return;
+    }
+    if (requested == 3 && _desiredPhases != 3) {
+      ESP_LOGI(TAG, "running the pending switch to 3p");
+      switchTo3P();
+      return;
+    }
     
     // Update registers every 2 seconds
     static uint32_t last_update = 0;
@@ -585,6 +599,24 @@ void PhaseSwitch::switchTo3P(){
   _phaseSwitchRequested = true;
   _currentWrittenDuringSwitch = false;
   _state = State::SwitchPhases;
+}
+
+// Phase request from evcc (register 4). Outside Running the request is kept
+// and run once the board is back in Running, so evcc's request is never
+// dropped and reading register 4 returns what evcc asked for.
+void PhaseSwitch::requestPhases(uint8_t phases){
+  if (_state == State::Running && _firmwareSupported) {
+    _requestedPhases = 0;
+    if (phases == 1) switchTo1P(); else switchTo3P();
+    return;
+  }
+  _requestedPhases = phases;
+  ESP_LOGI(TAG, "keeping the switch to %up until Running", phases);
+}
+
+uint8_t PhaseSwitch::reportedPhases(){
+  const uint8_t requested = _requestedPhases;
+  return requested ? requested : _desiredPhases;
 }
 
 bool PhaseSwitch::canSwitchTo1P(){
@@ -962,7 +994,7 @@ bool PhaseSwitch::handleModbusRequest(uint8_t unitId, const uint8_t* pdu, size_t
 bool PhaseSwitch::handleReadHolding(uint8_t, uint16_t addr, uint16_t count, std::vector<uint8_t>& responsePdu)
 {
   if (addr == 4 && count == 1) {
-    uint16_t phases = _desiredPhases;
+    uint16_t phases = reportedPhases();
     buildReadResponse(FC_READ_HOLDING, &phases, 1, responsePdu);
     return true;
   }
@@ -1019,11 +1051,9 @@ bool PhaseSwitch::handleReadInput(uint8_t, uint16_t addr, uint16_t count, std::v
 
 bool PhaseSwitch::handleWriteHolding(uint8_t, uint16_t addr, uint16_t value, std::vector<uint8_t>& responsePdu)
 {
-  if (_switchingSupported && _firmwareSupported && addr == 4) {
-    if (value == 1) {
-      switchTo1P();
-    } else if (value == 3) {
-      switchTo3P();
+  if (_switchingSupported && addr == 4) {
+    if (value == 1 || value == 3) {
+      requestPhases((uint8_t)value);
     } else {
       buildException(FC_WRITE_HOLDING, EX_ILLEGAL_DATA_VALUE, responsePdu);
       return true;

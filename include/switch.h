@@ -77,8 +77,11 @@
             uint32_t _unlockDeadlineMs;
             std::atomic<bool> _restartRequested;
             std::atomic<bool> _updateInProgress;
+            std::atomic<uint8_t> _requestedPhases; // phases requested outside Running, 0 = none
             uint32_t _restartDeadlineMs;
             void handleRestart();
+            void requestPhases(uint8_t phases);
+            uint8_t reportedPhases();
             void rememberCarState();
             void saveBootCache();
             void loadBootCache();
