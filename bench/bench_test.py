@@ -114,6 +114,15 @@ class Bench:
         except OSError:
             return None
 
+    def esp_status_page(self):
+        """Status page as "name = value" lines."""
+        try:
+            with urllib.request.urlopen(self.esp + "/status", timeout=3) as resp:
+                html = resp.read().decode("utf-8", "replace")
+        except OSError:
+            return ""
+        return re.sub(r"<[^>]*>", "\n", html.replace("</td><td>", " = "))
+
     def esp_state(self):
         page = self.esp_page()
         return page[1] if page else None
@@ -562,6 +571,10 @@ def test_wallbox_dies(b):
         b.sim("silent off")
     b.wait(lambda: "wallbox not responding" not in (b.esp_text() or "x"), 30,
            "board reports the wallbox back")
+    history = re.search(r"Wallbox history: = ([^\n]*)", b.esp_status_page())
+    b.note(f"status page: {history.group(1) if history else '?'}")
+    if not history or "not responding, last" not in history.group(1):
+        raise TestFailure("the status page does not list the outage")
     b.wait(lambda: b.charging(), 180, "evcc charging again")
     # Before the board gives up (60 s) evcc gets exception 4, afterwards 11.
     b.check_log(allowed=[r"exception '4'", r"exception '11'", r"i/o timeout",

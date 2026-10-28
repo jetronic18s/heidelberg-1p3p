@@ -46,7 +46,7 @@ import serial
 LAYOUT_VERSION = 0x108
 STATUS_A1, STATUS_B1, STATUS_B2, STATUS_C2, STATUS_LOCKED = 2, 4, 5, 7, 10
 MIN_CURRENT = 60  # 0.1 A
-INPUT_REGS = list(range(0, 20)) + [100, 101]
+INPUT_REGS = list(range(0, 20)) + [100, 101, 200, 203]
 HOLDING_REGS = range(256, 266)
 
 
@@ -191,6 +191,7 @@ class Wallbox:
             15: energy_on >> 16, 16: energy_on & 0xFFFF,
             17: energy >> 16, 18: energy & 0xFFFF,
             100: int(self.args.car_max), 101: 6,
+            200: 0, 203: 105,  # hardware variant, software revision (made up)
         })
         return regs
 
