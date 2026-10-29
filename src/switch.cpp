@@ -120,6 +120,7 @@ PhaseSwitch::PhaseSwitch()
   ,_holdingRegister(10, 0)
   ,_switchDelay(120000)
   ,_master_handle(nullptr)
+  ,_masterStarted(false)
   ,_tcpTaskHandle(nullptr)
   ,_serverId(1)
   ,_listenFd(-1)
@@ -267,14 +268,26 @@ void PhaseSwitch::beginModbus(){
     master_comm.ser_opts.data_bits = UART_DATA_8_BITS;
     master_comm.ser_opts.stop_bits = UART_STOP_BITS_1;
     
+    // Only raw requests are sent, but mbc_master_start() refuses to start
+    // without a parameter table. esp-modbus does not zero its size, so without
+    // this the start failed at random, depending on the heap contents.
+    static const mb_parameter_descriptor_t unusedTable[] = {
+        { .cid = 0, .param_key = "status", .param_units = "", .mb_slave_addr = 1,
+          .mb_param_type = MB_PARAM_INPUT, .mb_reg_start = 5, .mb_size = 1,
+          .param_offset = 0, .param_type = PARAM_TYPE_U16, .param_size = PARAM_SIZE_U16,
+          .param_opts = {}, .access = PAR_PERMS_READ },
+    };
+
     if (mbc_master_create_serial(&master_comm, &_master_handle) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create Modbus master");
     } else {
         uart_set_pin(UART_NUM_0, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, PIN_RS485_DE, UART_PIN_NO_CHANGE);
         uart_set_mode(UART_NUM_0, UART_MODE_RS485_HALF_DUPLEX);
-        if (mbc_master_start(_master_handle) != ESP_OK) {
+        if (mbc_master_set_descriptor(_master_handle, unusedTable, 1) != ESP_OK
+            || mbc_master_start(_master_handle) != ESP_OK) {
             ESP_LOGE(TAG, "Failed to start Modbus master");
         } else {
+            _masterStarted = true;
             ESP_LOGI(TAG, "Modbus RTU master started on UART0");
         }
     }
@@ -767,6 +780,9 @@ static const char *rtuErrorName(esp_err_t err)
 
 std::string PhaseSwitch::wallboxStatusText(){
   const uint32_t now = nowMs();
+  if (!_masterStarted) {
+    return _master_handle ? "RS485 master not started" : "RS485 not started yet";
+  }
   if (_wallboxSilent) {
     return "not responding for " + formatDuration(now - _wallboxSilentSinceMs)
       + " (" + rtuErrorName(_lastRtuError) + ")";

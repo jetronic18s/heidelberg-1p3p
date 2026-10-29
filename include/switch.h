@@ -62,6 +62,7 @@
             uint8_t getActivePhases();
             //modbus
             void* _master_handle;
+            bool _masterStarted;
             TaskHandle_t _tcpTaskHandle;
             uint8_t _serverId;
             int _listenFd;
