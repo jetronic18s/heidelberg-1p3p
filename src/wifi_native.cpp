@@ -106,9 +106,33 @@ void wifiNativeDisable()
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_set_mode(WIFI_MODE_NULL));
 }
 
+// The default fast scan takes the first access point with the SSID, e.g. the
+// router on a lower channel instead of a repeater next to the board. Scan all
+// channels and take the strongest. The config is stored in flash, so boards
+// with stored credentials are updated here once.
+static void useStrongestAp(wifi_config_t *cfg)
+{
+    cfg->sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    cfg->sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+}
+
+static void ensureStrongestAp()
+{
+    wifi_config_t cfg = {};
+    if (esp_wifi_get_config(WIFI_IF_STA, &cfg) != ESP_OK || cfg.sta.ssid[0] == '\0') {
+        return;
+    }
+    if (cfg.sta.scan_method == WIFI_ALL_CHANNEL_SCAN && cfg.sta.sort_method == WIFI_CONNECT_AP_BY_SIGNAL) {
+        return;
+    }
+    useStrongestAp(&cfg);
+    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_set_config(WIFI_IF_STA, &cfg));
+}
+
 void wifiNativeConnectSta()
 {
     wifiNativeEnsureStaMode();
+    ensureStrongestAp();
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_connect());
 }
 
@@ -116,6 +140,7 @@ void wifiNativeReconnectSta()
 {
     wifiNativeEnsureStaMode();
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_disconnect());
+    ensureStrongestAp();
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_connect());
 }
 
@@ -212,6 +237,7 @@ bool wifiNativeSetStaCredentials(const std::string &ssid, const std::string &pas
     wifi_config_t cfg = {};
     strncpy(reinterpret_cast<char *>(cfg.sta.ssid), ssid.c_str(), sizeof(cfg.sta.ssid) - 1);
     strncpy(reinterpret_cast<char *>(cfg.sta.password), pass.c_str(), sizeof(cfg.sta.password) - 1);
+    useStrongestAp(&cfg);
     return esp_wifi_set_config(WIFI_IF_STA, &cfg) == ESP_OK;
 }
 
