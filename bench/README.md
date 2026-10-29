@@ -86,7 +86,8 @@ in 5 s instead of about 20 s.
 
 ## Setup
 
-1. **evcc binary:** build the patched evcc (the Heidelberg 1p3p fork) and put
+1. **evcc binary:** build the patched evcc (branch `heidelberg-1p3p-0.318.1`
+   of [jetronic18s/evcc](https://github.com/jetronic18s/evcc/tree/heidelberg-1p3p-0.318.1)) and put
    it into the bench directory. With a build that has the sponsorship checks
    removed no token is needed; otherwise add the sponsor token to the config.
 
