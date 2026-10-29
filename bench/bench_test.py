@@ -659,6 +659,25 @@ def test_power_loss_no_car(b):
     b.check_log(allowed=ALLOWED_ON_POWER_LOSS)
 
 
+def test_disable_after_switch(b):
+    """Disable right after a switch: the current stays at 0 A"""
+    b.start_charging(pv=5000, phases=3)
+    try:
+        b.evcc_post("phases/1")
+        b.wait(lambda: b.sim_state()["powered_phases"] == 1 and b.esp_state() == "Running",
+               120, "board on 1p and Running")
+        b.mark_log()
+        b.evcc_post("mode/off")
+        b.settle(90)  # nothing on the board may raise the current again
+        written = [line for line in b.sim_log_since_mark() if "max current" in line]
+        b.note(f"currents written after mode off: {written}")
+        if any(float(re.search(r"max current ([\d.]+) A", line).group(1)) > 0 for line in written):
+            raise TestFailure("the current went up after evcc disabled charging")
+    finally:
+        b.evcc_post("phases/0")
+    b.check_log()
+
+
 def test_dead_wallbox(b):
     """Dead wallbox: silent wallbox after power-on leads to safety fault 0xE104"""
     b.sim("car off")
@@ -680,6 +699,7 @@ TESTS = [
     test_unplug, test_unplug_during_restart, test_plug_during_switch, test_double_switch,
     test_house_spike, test_mode_off, test_evcc_restart, test_evcc_down, test_wallbox_dies,
     test_dead_wallbox, test_power_loss_charging, test_power_loss_no_car,
+    test_disable_after_switch,
 ]
 
 # tests that end in a safety fault on purpose
