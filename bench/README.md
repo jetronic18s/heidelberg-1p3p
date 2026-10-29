@@ -187,6 +187,11 @@ Test 10 uploads a firmware image via OTA: by default `build/heidelberg-1p3p.bin`
 otherwise set `FIRMWARE_BIN`. Use the image that is on the board, so the test
 does not change the firmware under test.
 
+Before a release, run all tests once on LAN and once on WiFi with the release
+candidate on the board, and keep both outputs in the bench directory, e.g.
+`bench/bench_test.py > ../evcc_testbench/results/v1.1.3-lan.out` and
+`-wlan.out` (with `ESP_IP` of the WiFi address).
+
 Before each test the script brings the bench into a common start state: car
 unplugged, no PV, 500 W house load, evcc in PV mode with automatic phases,
 enable and disable delay 30 s. Afterwards it sets the delays back to 60 s.
