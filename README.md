@@ -51,14 +51,31 @@ Selbst bauen, Versionierung, Release-Ablauf und Tests: siehe [README_IDF.md](REA
 
 Unter **Status** werden die Ethernet MAC und IP angezeigt (zusätzlich zu WiFi). Wenn WLAN oder LAN nicht aktiv sind, werden deren IP‑Felder leer gelassen. Zusätzlich wird angezeigt, ob WLAN‑Credentials gesetzt sind.
 
-Für die Fehlersuche zeigt die Statusseite außerdem:
+Die Statusseite ist in Abschnitte gegliedert:
+
+| Abschnitt | Inhalt |
+| --------- | ------ |
+| Phase switch | Zustand, Safety Fault, Umschaltungen, Relais und Rückmeldungen der Schütze |
+| evcc (Modbus TCP) | letzte Anfrage von evcc, Watchdog-Timeouts, IP des verbundenen evcc, Bridge-Zähler |
+| Wallbox (RS485) | Verbindung zur Wallbox, Ausfälle, Wallbox-Daten, RTU-Zähler |
+| Wallbox values | Messwerte der Wallbox: Status, Ströme, Spannungen, Leistung, Energie, Temperatur |
+| Wallbox settings | Watchdog-Zeit, Failsafe-Strom, Ladestrom, Fernsperre, Standby |
+| Network | LAN, WLAN, Telnet-Debug |
+| System | Version, Build-Zeit, Laufzeit, Grund des letzten Neustarts, Speicher |
+
+Für die Fehlersuche besonders nützlich:
 
 | Zeile | Beispiel | Bedeutung |
 | ----- | -------- | --------- |
-| `Wallbox` | `ok, last answer 0.5 s ago, 0/110 errors (last minute)` | Verbindung zur Wallbox (RS485): letzte Antwort, Fehler in der letzten Minute. Im Fehlerfall `not responding for 75 s (timeout)` |
+| `Phase switches` | `12 since start, last 1p to 3p 14 min ago, took 36 s` | Umschaltungen seit dem Start; zeigt, ob evcc ständig umschaltet. Eine gemerkte Anforderung erscheint als `pending: 3p` |
+| `Contactors` | `1p relay on / feedback on, 3p relay off / feedback off` | Sollzustand der Relais und Rückmeldung der Hilfskontakte; passen sie nicht zusammen, stimmt etwas mit Schütz oder Verdrahtung nicht |
+| `evcc` | `last request 2.8 s ago, 0 timeouts` | letzte Anfrage von evcc und wie oft der Watchdog den Failsafe-Strom gesetzt hat |
+| `evcc client` | `192.168.178.9, 1 connected` | wer zuletzt verbunden war: so fällt eine zweite evcc-Instanz auf |
+| `Wallbox` | `ok, last answer 0.5 s ago, 0/110 errors (last minute)` | Verbindung zur Wallbox: letzte Antwort, Fehler in der letzten Minute. Im Fehlerfall `not responding for 75 s (timeout)` |
 | `Wallbox history` | `1x not responding, last 3.5 h ago for 75 s; last error: timeout 2 min ago` | Ausfälle seit dem Start und der letzte Fehler. Ein `timeout` deutet eher auf Kabel oder ausgeschaltete Box hin, `CRC error` oder `invalid response` eher auf Störungen |
 | `Wallbox info` | `hardware current 6-16 A, software revision 105` | Drehschalter-Einstellung (Register 100/101) und Software-Revision der Wallbox (Register 203) |
-| `evcc` | `last request 2.8 s ago, 0 timeouts` | letzte Anfrage von evcc und wie oft der Watchdog den Failsafe-Strom gesetzt hat |
+| `Last restart` | `brownout (supply voltage dropped)` | Grund des letzten Neustarts des ESP. `brownout` oder `crash` deuten auf Störungen der Versorgung hin, z. B. durch ein brummendes Schütz |
+| `Memory` | `145 kB free, minimum 143 kB` | freier Speicher; sinkt das Minimum über Wochen stetig, verliert die Firmware Speicher |
 
 ### DHCP vs. statische IP
 
