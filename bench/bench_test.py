@@ -628,6 +628,15 @@ def prepare(b):
     b.evcc_post("enable/delay/30")
     b.evcc_post("disable/delay/30")
     b.wait(lambda: not b.lp()["connected"], 30, "evcc: no car")
+    # A switch behind evcc's back (by hand, or a previous run) leaves evcc
+    # expecting other phases; evcc would log a phases mismatch on the next
+    # car connect. Bring the board to the phases evcc expects.
+    expected = b.lp()["phasesActive"]
+    if expected in (1, 3) and b.sim_state()["powered_phases"] != expected:
+        b.note(f"board on {b.sim_state()['powered_phases']}p, evcc expects {expected}p: switching")
+        b.esp_write(4, expected)
+        b.wait(lambda: b.sim_state()["powered_phases"] == expected and b.esp_state() == "Running",
+               120, f"board on {expected}p")
 
 
 def check_invariants(b, test, lost_before):
