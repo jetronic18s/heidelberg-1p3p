@@ -67,12 +67,12 @@ Für die Fehlersuche besonders nützlich:
 
 | Zeile | Beispiel | Bedeutung |
 | ----- | -------- | --------- |
-| `Phase switches` | `12 since start, last 1p to 3p 14 min ago, took 36 s` | Umschaltungen seit dem Start; zeigt, ob evcc ständig umschaltet. Eine gemerkte Anforderung erscheint als `pending: 3p` |
+| `Phase switches` | `12 since power-on, last 1p to 3p 14 min ago, took 36 s` | Umschaltungen seit dem letzten Einschalten (zählt über Neustarts und OTA-Updates hinweg); zeigt, ob evcc ständig umschaltet. Eine gemerkte Anforderung erscheint als `pending: 3p` |
 | `Contactors` | `1p relay on / feedback on, 3p relay off / feedback off` | Sollzustand der Relais und Rückmeldung der Hilfskontakte; passen sie nicht zusammen, stimmt etwas mit Schütz oder Verdrahtung nicht |
-| `evcc` | `last request 2.8 s ago, 0 timeouts` | letzte Anfrage von evcc und wie oft der Watchdog den Failsafe-Strom gesetzt hat |
+| `evcc` | `last request 2.8 s ago, 0 timeouts since power-on` | letzte Anfrage von evcc und wie oft der Watchdog den Failsafe-Strom gesetzt hat |
 | `evcc client` | `192.168.178.9, 1 connected` | wer zuletzt verbunden war: so fällt eine zweite evcc-Instanz auf |
 | `Wallbox` | `ok, last answer 0.5 s ago, 0/110 errors (last minute)` | Verbindung zur Wallbox: letzte Antwort, Fehler in der letzten Minute. Im Fehlerfall `not responding for 75 s (timeout)` |
-| `Wallbox history` | `1x not responding, last 3.5 h ago for 75 s; last error: timeout 2 min ago` | Ausfälle seit dem Start und der letzte Fehler. Ein `timeout` deutet eher auf Kabel oder ausgeschaltete Box hin, `CRC error` oder `invalid response` eher auf Störungen |
+| `Wallbox history` | `1x not responding since power-on, last 3.5 h ago for 75 s; last error: timeout 2 min ago` | Ausfälle seit dem letzten Einschalten und der letzte Fehler. Ein `timeout` deutet eher auf Kabel oder ausgeschaltete Box hin, `CRC error` oder `invalid response` eher auf Störungen |
 | `Wallbox info` | `hardware current 6-16 A, software revision 105` | Drehschalter-Einstellung (Register 100/101) und Software-Revision der Wallbox (Register 203) |
 | `Last restart` | `brownout (supply voltage dropped)` | Grund des letzten Neustarts des ESP. `brownout` oder `crash` deuten auf Störungen der Versorgung hin, z. B. durch ein brummendes Schütz |
 | `Memory` | `145 kB free, minimum 143 kB` | freier Speicher; sinkt das Minimum über Wochen stetig, verliert die Firmware Speicher |

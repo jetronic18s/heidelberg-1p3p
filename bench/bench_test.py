@@ -573,7 +573,7 @@ def test_wallbox_dies(b):
            "board reports the wallbox back")
     history = re.search(r"Wallbox history: = ([^\n]*)", b.esp_status_page())
     b.note(f"status page: {history.group(1) if history else '?'}")
-    if not history or "not responding, last" not in history.group(1):
+    if not history or "not responding since power-on, last" not in history.group(1):
         raise TestFailure("the status page does not list the outage")
     b.wait(lambda: b.charging(), 180, "evcc charging again")
     # Before the board gives up (60 s) evcc gets exception 4, afterwards 11.
