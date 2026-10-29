@@ -371,6 +371,28 @@ static esp_err_t handleRootGet(httpd_req_t *req)
   return ESP_OK;
 }
 
+static void sendTableSection(std::string &response, const char *title)
+{
+  appendf(response, "<tr><td colspan=\"2\"><p></p><b>%s</b></td></tr>", title);
+}
+
+static const char *resetReasonText(esp_reset_reason_t reason)
+{
+  switch (reason) {
+    case ESP_RST_POWERON: return "power-on";
+    case ESP_RST_EXT: return "reset pin";
+    case ESP_RST_SW: return "software (reboot, OTA)";
+    case ESP_RST_PANIC: return "crash (panic)";
+    case ESP_RST_INT_WDT: return "interrupt watchdog";
+    case ESP_RST_TASK_WDT: return "task watchdog";
+    case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_DEEPSLEEP: return "deep sleep";
+    case ESP_RST_BROWNOUT: return "brownout (supply voltage dropped)";
+    case ESP_RST_SDIO: return "SDIO";
+    default: return "unknown";
+  }
+}
+
 static esp_err_t handleStatusGet(httpd_req_t *req)
 {
   dbgln("[webserver] GET /status");
@@ -378,6 +400,62 @@ static esp_err_t handleStatusGet(httpd_req_t *req)
   sendResponseHeader(body, "Status");
   body += "<table>";
 
+  sendTableSection(body, "Phase switch");
+  sendTableRow(body, "State", s_phase_switch->getState());
+  if (s_phase_switch->getSafetyFaultCode() == 0) {
+    sendTableRow(body, "Safety Fault", "none");
+  } else {
+    char fault[96];
+    snprintf(fault, sizeof(fault), "0x%04X: %s", (unsigned int)s_phase_switch->getSafetyFaultCode(),
+             s_phase_switch->getSafetyFaultText().c_str());
+    sendTableRow(body, "Safety Fault", fault);
+  }
+  sendTableRow(body, "Phase switches", s_phase_switch->switchStatusText());
+  sendTableRow(body, "Contactors", s_phase_switch->contactorText());
+
+  sendTableSection(body, "evcc (Modbus TCP)");
+  sendTableRow(body, "evcc", s_phase_switch->evccStatusText());
+  sendTableRow(body, "evcc client", s_phase_switch->evccClientText());
+  sendTableRow(body, "Bridge Messages", s_phase_switch->getBridgeMessageCount());
+  sendTableRow(body, "Bridge Errors", s_phase_switch->getBridgeErrorCount());
+
+  sendTableSection(body, "Wallbox (RS485)");
+  sendTableRow(body, "Wallbox", s_phase_switch->wallboxStatusText());
+  sendTableRow(body, "Wallbox history", s_phase_switch->wallboxHistoryText());
+  sendTableRow(body, "Wallbox info", s_phase_switch->wallboxInfoText());
+  sendTableRow(body, "RTU Messages", s_phase_switch->getRtuMessageCount());
+  sendTableRow(body, "RTU Pending Messages", s_phase_switch->getRtuPendingRequestCount());
+  sendTableRow(body, "RTU Errors", s_phase_switch->getRtuErrorCount());
+
+  sendTableSection(body, "Wallbox values");
+  sendTableRow(body, "Charging State", ChargingState(s_phase_switch->getInputRegister(5)));
+  sendTableRow(body, "L1 - Current (A)", s_phase_switch->getInputRegister(6) * 0.1f);
+  sendTableRow(body, "L2 - Current (A)", s_phase_switch->getInputRegister(7) * 0.1f);
+  sendTableRow(body, "L3 - Current (A)", s_phase_switch->getInputRegister(8) * 0.1f);
+  sendTableRow(body, "Voltage L1 (V)", s_phase_switch->getInputRegister(10));
+  sendTableRow(body, "Voltage L2 (V)", s_phase_switch->getInputRegister(11));
+  sendTableRow(body, "Voltage L3 (V)", s_phase_switch->getInputRegister(12));
+  sendTableRow(body, "Power (VA)", s_phase_switch->getInputRegister(14));
+  sendTableRow(body, "Energy since PowerOn (Wh)", (uint32_t)((uint32_t)s_phase_switch->getInputRegister(15) << 16 | s_phase_switch->getInputRegister(16)));
+  sendTableRow(body, "Energy since Installation (Wh)", (uint32_t)((uint32_t)s_phase_switch->getInputRegister(17) << 16 | s_phase_switch->getInputRegister(18)));
+  sendTableRow(body, "PCB-Temperatur (C)", s_phase_switch->getInputRegister(9) * 0.1f);
+  sendTableRow(body, "extern lock state", s_phase_switch->getInputRegister(13) == 0 ? "locked" : "unlocked");
+  char regLayout[16];
+  snprintf(regLayout, sizeof(regLayout), "0x%X", (unsigned int)s_phase_switch->getInputRegister(4));
+  sendTableRow(body, "Modbus Register-Layouts Version", regLayout);
+
+  sendTableSection(body, "Wallbox settings");
+  sendTableRow(body, "ModBus-Master WatchDog Timeout (ms)", s_phase_switch->getHoldingRegister(257));
+  sendTableRow(body, "FailSafe Current configuration (A)", s_phase_switch->getHoldingRegister(262) * 0.1f);
+  sendTableRow(body, "Maximal current command (A)", s_phase_switch->getHoldingRegister(261) * 0.1f);
+  sendTableRow(body, "Remote lock", s_phase_switch->getHoldingRegister(259) == 0 ? "locked" : "unlocked");
+  sendTableRow(body, "Standby Function Control", s_phase_switch->getHoldingRegister(258) == 0 ? "enabled" : "disabled");
+
+  sendTableSection(body, "Network");
+#ifdef BOARD_DINGTIAN
+  sendTableRow(body, "ETH MAC", ethernetGetMacString());
+  sendTableRow(body, "ETH IP", ethernetGetIpString());
+#endif
   const bool wifiConnected = (wifiNativeGetMode() != WIFI_MODE_NULL) && wifiNativeIsStaConnected();
   const bool wifiCredsSet = hasSavedWifiCredentials();
   sendTableRow(body, "WiFi Credentials", wifiCredsSet ? "set" : "not set");
@@ -386,56 +464,19 @@ static esp_err_t handleStatusGet(httpd_req_t *req)
   sendTableRow(body, "WiFi Quality", wifiConnected ? WiFiQuality(wifiNativeStaRssi()) : std::string(""));
   sendTableRow(body, "WiFi MAC", wifiMacSafe());
   sendTableRow(body, "WiFi IP", wifiConnected ? wifiNativeStaIpString() : std::string());
-#ifdef BOARD_DINGTIAN
-  sendTableRow(body, "ETH MAC", ethernetGetMacString());
-  sendTableRow(body, "ETH IP", ethernetGetIpString());
-#endif
-  body += "<tr><td>&nbsp;</td><td></td></tr>";
-
-  sendTableRow(body, "RTU Messages", s_phase_switch->getRtuMessageCount());
-  sendTableRow(body, "RTU Pending Messages", s_phase_switch->getRtuPendingRequestCount());
-  sendTableRow(body, "RTU Errors", s_phase_switch->getRtuErrorCount());
-  sendTableRow(body, "Wallbox", s_phase_switch->wallboxStatusText());
-  sendTableRow(body, "Wallbox history", s_phase_switch->wallboxHistoryText());
-  sendTableRow(body, "Wallbox info", s_phase_switch->wallboxInfoText());
-  sendTableRow(body, "evcc", s_phase_switch->evccStatusText());
-  sendTableRow(body, "Bridge Message", s_phase_switch->getBridgeMessageCount());
-  sendTableRow(body, "Bridge Clients", s_phase_switch->getBridgeActiveClientCount());
-  sendTableRow(body, "Bridge Errors", s_phase_switch->getBridgeErrorCount());
-  char safetyCode[16];
-  snprintf(safetyCode, sizeof(safetyCode), "0x%04X", (unsigned int)s_phase_switch->getSafetyFaultCode());
-  sendTableRow(body, "Safety Fault Code", safetyCode);
-  sendTableRow(body, "Safety Fault", s_phase_switch->getSafetyFaultText());
   sendTableRow(body, "Telnet Debug", (s_config->getModbusEnabled() && s_config->getTelnetEnabled()) ? "enabled (port 23)" : "disabled");
-  body += "<tr><td>&nbsp;</td><td></td></tr>";
 
-  char regLayout[16];
-  snprintf(regLayout, sizeof(regLayout), "0x%X", (unsigned int)s_phase_switch->getInputRegister(4));
-  sendTableRow(body, "Modbus Register-Layouts Version", regLayout);
-  sendTableRow(body, "Charging State", ChargingState(s_phase_switch->getInputRegister(5)));
-  sendTableRow(body, "L1 - Current (A)", s_phase_switch->getInputRegister(6) * 0.1f);
-  sendTableRow(body, "L2 - Current (A)", s_phase_switch->getInputRegister(7) * 0.1f);
-  sendTableRow(body, "L3 - Current (A)", s_phase_switch->getInputRegister(8) * 0.1f);
-  sendTableRow(body, "PCB-Temperatur (C)", s_phase_switch->getInputRegister(9) * 0.1f);
-  sendTableRow(body, "Voltage L1 (V)", s_phase_switch->getInputRegister(10));
-  sendTableRow(body, "Voltage L2 (V)", s_phase_switch->getInputRegister(11));
-  sendTableRow(body, "Voltage L3 (V)", s_phase_switch->getInputRegister(12));
-  sendTableRow(body, "extern lock state", s_phase_switch->getInputRegister(13) == 0 ? "locked" : "unlocked");
-  sendTableRow(body, "Power (VA)", s_phase_switch->getInputRegister(14));
-  sendTableRow(body, "Energy since PowerOn (Wh)", (uint32_t)((uint32_t)s_phase_switch->getInputRegister(15) << 16 | s_phase_switch->getInputRegister(16)));
-  sendTableRow(body, "Energy since Installation (Wh)", (uint32_t)((uint32_t)s_phase_switch->getInputRegister(17) << 16 | s_phase_switch->getInputRegister(18)));
-  body += "<tr><td>&nbsp;</td><td></td></tr>";
-
-  sendTableRow(body, "ModBus-Master WatchDog Timeout (ms)", s_phase_switch->getHoldingRegister(257));
-  sendTableRow(body, "Standby Function Control", s_phase_switch->getHoldingRegister(258) == 0 ? "enabled" : "disabled");
-  sendTableRow(body, "Remote lock", s_phase_switch->getHoldingRegister(259) == 0 ? "locked" : "unlocked");
-  sendTableRow(body, "Maximal current command (A)", s_phase_switch->getHoldingRegister(261) * 0.1f);
-  sendTableRow(body, "FailSafe Current configuration (A)", s_phase_switch->getHoldingRegister(262) * 0.1f);
-
-  body += "<tr><td>&nbsp;</td><td></td></tr>";
+  sendTableSection(body, "System");
   sendTableRow(body, "Version", APP_VERSION);
   sendTableRow(body, "Build time", __DATE__ " " __TIME__);
   sendTableRow(body, "Uptime", Uptime());
+  std::string restart = resetReasonText(esp_reset_reason());
+  if (s_phase_switch->bootCacheRestored()) restart += ", register cache restored";
+  sendTableRow(body, "Last restart", restart);
+  char heap[48];
+  snprintf(heap, sizeof(heap), "%u kB free, minimum %u kB",
+           (unsigned)(esp_get_free_heap_size() / 1024), (unsigned)(esp_get_minimum_free_heap_size() / 1024));
+  sendTableRow(body, "Memory", heap);
   body += "</table><p></p>";
 
   if (s_config->getModbusEnabled()) {
