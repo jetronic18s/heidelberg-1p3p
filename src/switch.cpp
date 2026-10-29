@@ -56,13 +56,18 @@ static constexpr uint16_t HEC_STATUS_B1 = 4;
 // Register cache kept across a software restart (OTA, reboot button) in RTC
 // memory, so evcc gets the last known values until the wallbox answers again.
 // The contents are random after a power loss, hence the magic and the CRC.
-static constexpr uint32_t BOOT_CACHE_MAGIC = 0x48454332; // "HEC2"
+// Bump the magic when the layout of BootCache changes after a release.
+static constexpr uint32_t BOOT_CACHE_MAGIC = 0x48454331; // "HEC1"
 struct BootCache {
   uint32_t magic;
   uint16_t input[20];
   uint16_t holding[10];
   uint16_t reportedStatus;
   uint8_t desiredPhases;
+  // status page counters, so they count since power-on, not since a restart
+  uint32_t switchCount;
+  uint32_t wallboxOutages;
+  uint32_t evccTimeouts;
   uint32_t crc;
 };
 static RTC_NOINIT_ATTR BootCache s_bootCache;
@@ -185,6 +190,9 @@ void PhaseSwitch::loadBootCache(){
     if (s_bootCache.desiredPhases == 1 || s_bootCache.desiredPhases == 3) {
       _desiredPhases = s_bootCache.desiredPhases;
     }
+    _switchCount = s_bootCache.switchCount;
+    _wallboxOutages = s_bootCache.wallboxOutages;
+    _evccTimeouts = s_bootCache.evccTimeouts;
     _bootCacheValid = true;
     ESP_LOGI(TAG, "restored register cache from before the restart, status %u, %up",
              _reportedStatus, _desiredPhases);
@@ -198,6 +206,9 @@ void PhaseSwitch::saveBootCache(){
   std::copy(_holdingRegister.begin(), _holdingRegister.end(), s_bootCache.holding);
   s_bootCache.reportedStatus = _reportedStatus;
   s_bootCache.desiredPhases = reportedPhases(); // a pending request wins
+  s_bootCache.switchCount = _switchCount;
+  s_bootCache.wallboxOutages = _wallboxOutages;
+  s_bootCache.evccTimeouts = _evccTimeouts;
   s_bootCache.magic = BOOT_CACHE_MAGIC;
   s_bootCache.crc = bootCacheCrc(s_bootCache);
 }
@@ -774,9 +785,9 @@ std::string PhaseSwitch::wallboxHistoryText(){
   std::string text;
   const uint32_t outages = _wallboxOutages;
   if (outages == 0) {
-    text = "no outages";
+    text = "no outages since power-on";
   } else {
-    text = std::to_string(outages) + "x not responding";
+    text = std::to_string(outages) + "x not responding since power-on";
     if (_lastOutageEndMs) {
       text += ", last " + formatDuration(nowMs() - _lastOutageEndMs) + " ago for "
         + formatDuration(_lastOutageMs);
@@ -793,7 +804,7 @@ std::string PhaseSwitch::evccStatusText(){
   const uint32_t last = _lastBridgeRequestMs;
   if (last == 0) return "no request yet";
   std::string text = "last request " + formatDuration(nowMs() - last) + " ago, "
-    + std::to_string(_evccTimeouts) + " timeouts";
+    + std::to_string(_evccTimeouts) + " timeouts since power-on";
   if (_evccTimeout) text += ", failsafe current active";
   return text;
 }
@@ -806,7 +817,7 @@ void PhaseSwitch::finishSwitchStats(){
 }
 
 std::string PhaseSwitch::switchStatusText(){
-  std::string text = std::to_string(_switchCount) + " since start";
+  std::string text = std::to_string(_switchCount) + " since power-on";
   if (_lastSwitchTo) {
     text += ", last " + std::to_string(_lastSwitchFrom) + "p to " + std::to_string(_lastSwitchTo) + "p ";
     if (_switchStartMs) {
