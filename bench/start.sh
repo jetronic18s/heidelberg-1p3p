@@ -40,6 +40,9 @@ ESP_IP=$ESP_IP
 RS485=$RS485
 EVCC_PORT=$EVCC_PORT
 SIM_PORT=$SIM_PORT
+# Tasmota plug for the board's power supply, e.g. http://192.168.178.169
+# (power loss tests; empty: skipped)
+POWER_SWITCH=
 EOF
     echo "created $ENV_FILE"
   fi

@@ -68,6 +68,11 @@ next to the repository, override with `BENCH_DIR`):
   Relay off closes NC and pulls the input to GND ("contactor off"); relay on
   opens NC ("contactor on"). If DI1 and DI2 are swapped, the board reports
   `0xE102` after the first switch-on; swap the NC wires.
+- **Switchable plug (optional)** for the board's power supply: a Tasmota
+  plug, set as `POWER_SWITCH=http://<plug IP>` in `bench.env`. The power loss
+  tests use it; without it they are skipped. The tests switch it through the
+  Tasmota web UI (`/?m=1`), no Tasmota configuration is needed; a web
+  password is not supported.
 - **Disconnect the USB serial flasher** during tests: on Dingtian boards
   RS485 shares UART0 with it. Use Telnet debug for logs (web UI → Config).
 
@@ -99,7 +104,7 @@ in 5 s instead of about 20 s.
    ```
 
    This creates `bench.env` and `evcc.yaml`. Edit `bench.env` for another
-   adapter or ports, then run `--init` again to regenerate `evcc.yaml`.
+   adapter or ports, or set `POWER_SWITCH` for the power loss tests, then run `--init` again to regenerate `evcc.yaml`.
    **The config must only ever point at the bench board.**
 
 ## Running the bench
@@ -194,7 +199,9 @@ Checks after every test:
 - **evcc log:** no errors or warnings, except the ones expected while the
   board or evcc restarts (connection errors, `exception '11'`,
   `charger out of sync`). `invalid status`, `exception '4'` and
-  `phases mismatch` always fail a test.
+  `phases mismatch` always fail a test, except where a test expects them
+  (e.g. one `exception '4'` while the board runs on for a moment on its
+  capacitors after a power loss).
 - **Energy counter:** the simulator counts energy lost when the wallbox loses
   power without being locked first. Any loss fails the test, except in the
   tests with a wallbox that does not answer (it cannot be locked).
@@ -209,6 +216,7 @@ Results:
 | `FAIL` | test failed: the reason is printed below the test |
 | `KNOWN` | test failed because of a known, open problem (see below) |
 | `FIXED?` | a test marked as known problem passed: check and remove the mark |
+| `SKIP` | test skipped, e.g. a power loss test without `POWER_SWITCH` |
 
 The exit code is 0 if no test failed; `KNOWN` does not count as failure. A
 failure while preparing a test is always `FAIL`, also for tests marked as
@@ -238,6 +246,8 @@ known problem.
 | 20 | evcc gone | evcc stopped while charging: within 30 s the board applies the failsafe current (0 A) and shows `[evcc timeout]`; charging resumes when evcc is back |
 | 21 | Wallbox dies while charging | silent wallbox while charging: its watchdog stops charging, the board shows `[wallbox not responding]` after 60 s, charging resumes without reboot when it answers again, the status page lists the outage |
 | 22 | Dead wallbox | silent wallbox after power-on: safety fault `0xE104`, recovery after a reboot |
+| 23 | Power loss while charging | board and simulated wallbox off for 15 s while charging on 3p: the status page reports a power-on restart, evcc charges again (`exception '11'` until the wallbox answers, `phases mismatch` once because the board boots on 1p) |
+| 24 | Power loss without car | the same without a car: no phantom car connect in evcc |
 
 ### Known problems
 
@@ -256,9 +266,8 @@ or unexpected evcc log lines, and prints the number of phase switches.
 
 Not automated, because they need a hand on the hardware:
 
-- **Power loss:** unplug the board's power supply while charging and plug it
-  back in. evcc must see `exception '11'` instead of `invalid status` until
-  the wallbox answers, and no phantom car connect afterwards.
+- **Power loss** without a switchable plug: unplug the board's power supply
+  while charging and plug it back in, as in tests 23 and 24.
 - **Contactor faults:** pull the NC wire of DI1 while running (`0xE103`, or
   `0xE101` with the other contactor on); tie DI1 to GND permanently (`0xE102`
   after switch-on).

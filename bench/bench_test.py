@@ -44,6 +44,10 @@ class TestFailure(Exception):
     pass
 
 
+class TestSkipped(Exception):
+    pass
+
+
 def known_issue(description):
     """Mark a test that currently fails because of a known, open problem."""
     def mark(test):
@@ -53,7 +57,7 @@ def known_issue(description):
 
 
 def load_env():
-    env = {"RS485": "/dev/ttyUSB0", "EVCC_PORT": "7071", "SIM_PORT": "8502"}
+    env = {"RS485": "/dev/ttyUSB0", "EVCC_PORT": "7071", "SIM_PORT": "8502", "POWER_SWITCH": ""}
     path = os.path.join(BENCH_DIR, "bench.env")
     if os.path.exists(path):
         with open(path) as f:
@@ -76,6 +80,7 @@ class Bench:
         self.sim_port = int(env["SIM_PORT"])
         self.evcc_log = os.path.join(BENCH_DIR, "evcc.log")
         self.sim_log = os.path.join(BENCH_DIR, "sim.log")
+        self.power_switch = env["POWER_SWITCH"].rstrip("/")
         self.verbose = verbose
         self.log_mark = 0
         self.sim_log_mark = 0
@@ -167,6 +172,38 @@ class Bench:
             raise TestFailure(f"OTA upload failed: {reply}")
         self.wait_esp_down()
 
+    # board power (Tasmota plug in front of the board's power supply)
+
+    def power_state(self):
+        with urllib.request.urlopen(self.power_switch + "/?m=1", timeout=5) as resp:
+            text = re.sub(r"<[^>]*>", " ", resp.read().decode("utf-8", "replace"))
+        match = re.search(r"\b(ON|OFF)\s*$", text.strip())
+        if not match:
+            raise TestFailure(f"cannot read the power switch state: {text[-80:]!r}")
+        return match.group(1) == "ON"
+
+    def power_set(self, on):
+        """Switch the board's power. Uses the Tasmota web UI toggle, which
+        works without enabling the command API."""
+        if not self.power_switch:
+            raise TestSkipped("no POWER_SWITCH in bench.env")
+        if self.power_state() != on:
+            urllib.request.urlopen(self.power_switch + "/?m=1&o=1", timeout=5).read()
+        self.wait(lambda: self.power_state() == on, 10, f"power switch {'on' if on else 'off'}")
+        self.note(f"board power {'on' if on else 'off'}")
+
+    def power_cycle(self, off_seconds=15):
+        """Cut the board's power. The simulator learns about the wallbox power
+        from the board's web page, which is gone while the board is off, so
+        the simulated wallbox is switched off explicitly."""
+        self.power_set(False)
+        self.sim("phases 0")
+        try:
+            time.sleep(off_seconds)
+        finally:
+            self.power_set(True)
+            self.sim("phases auto")
+
     # evcc
 
     def lp(self):
@@ -213,9 +250,12 @@ class Bench:
         lp = self.lp()
         if not lp or not lp.get("charging"):
             return False
+        st = self.sim_state()
+        # evcc's flag can lag behind (e.g. while the board is unreachable)
+        if not any(c > 0 for c in st["currents"]):
+            return False
         if phases is None:
             return True
-        st = self.sim_state()
         return (st["powered_phases"] == phases
                 and sum(1 for c in st["currents"] if c > 0) == phases
                 and self.esp_state() == "Running")
@@ -581,6 +621,44 @@ def test_wallbox_dies(b):
                          r"charger out of sync"])
 
 
+# The board runs on for a moment on its capacitors after the plug is off,
+# while the simulated wallbox stops at once: evcc may see one passthrough
+# error (exception 4) before the board goes silent.
+ALLOWED_ON_POWER_LOSS = ALLOWED_ON_RESTART + [r"exception '4'"]
+
+
+def test_power_loss_charging(b):
+    """Power loss while charging on 3p: cold start, evcc charges again"""
+    if not b.power_switch:
+        raise TestSkipped("no POWER_SWITCH in bench.env")
+    b.start_charging(pv=7000, phases=3)
+    b.mark_log()
+    b.power_cycle()
+    b.wait_esp_running(150)
+    restart = re.search(r"Last restart: = ([^\n]*)", b.esp_status_page())
+    b.note(f"last restart: {restart.group(1) if restart else '?'}")
+    if not restart or not restart.group(1).startswith("power-on"):
+        raise TestFailure("the board does not report a power-on restart")
+    b.wait(lambda: b.charging(), 240, "evcc charging again")
+    # Without the RTC cache the board boots on 1p while evcc expected 3p:
+    # evcc warns once and takes over the phases.
+    b.check_log(allowed=ALLOWED_ON_POWER_LOSS + [r"phases mismatch"])
+
+
+def test_power_loss_no_car(b):
+    """Power loss without car: cold start without a phantom car connect"""
+    if not b.power_switch:
+        raise TestSkipped("no POWER_SWITCH in bench.env")
+    b.sim("car off")
+    b.mark_log()
+    b.power_cycle()
+    b.wait_esp_running(150)
+    b.settle(30)
+    if any("car connected" in line for line in b.log_since_mark()):
+        raise TestFailure("phantom car connect in evcc after the power loss")
+    b.check_log(allowed=ALLOWED_ON_POWER_LOSS)
+
+
 def test_dead_wallbox(b):
     """Dead wallbox: silent wallbox after power-on leads to safety fault 0xE104"""
     b.sim("car off")
@@ -601,13 +679,14 @@ TESTS = [
     test_restart_charging, test_ota_charging, test_restart_no_car, test_restart_on_3p,
     test_unplug, test_unplug_during_restart, test_plug_during_switch, test_double_switch,
     test_house_spike, test_mode_off, test_evcc_restart, test_evcc_down, test_wallbox_dies,
-    test_dead_wallbox,
+    test_dead_wallbox, test_power_loss_charging, test_power_loss_no_car,
 ]
 
 # tests that end in a safety fault on purpose
 EXPECTS_FAULT = {test_dead_wallbox}
 # a wallbox that does not answer cannot be locked before the power goes off
-EXPECTS_ENERGY_LOSS = {test_dead_wallbox}
+# and a power loss of the board cuts the wallbox without locking it first
+EXPECTS_ENERGY_LOSS = {test_dead_wallbox, test_power_loss_charging, test_power_loss_no_car}
 
 
 def prepare(b):
@@ -733,6 +812,8 @@ def main():
                 check_invariants(b, test, lost_before)
                 result = "FIXED?" if known else "PASS"
                 detail = "passes although marked as known issue: " + known if known else ""
+            except TestSkipped as err:
+                result, detail = "SKIP", str(err)
             except TestFailure as err:
                 result, detail = ("KNOWN", known) if known else ("FAIL", str(err))
                 if known:
@@ -750,8 +831,8 @@ def main():
     print(f"\n{'#':>2}  {'result':6} {'time':>6}  test")
     for number, doc, result, duration, _ in results:
         print(f"{number:2}  {result:6} {duration:5.0f}s  {doc}")
-    counts = {r: sum(1 for x in results if x[2] == r) for r in ("PASS", "FAIL", "KNOWN", "FIXED?")}
-    print(f"\n{counts['PASS']} passed, {counts['FAIL']} failed, {counts['KNOWN']} known issues, "
+    counts = {r: sum(1 for x in results if x[2] == r) for r in ("PASS", "FAIL", "KNOWN", "FIXED?", "SKIP")}
+    print(f"\n{counts['PASS']} passed, {counts['FAIL']} failed, {counts['SKIP']} skipped, {counts['KNOWN']} known issues, "
           f"{counts['FIXED?']} known issues passing, {(time.monotonic() - started) / 60:.1f} min")
     return 1 if counts["FAIL"] or len(results) < len(selected) else 0
 

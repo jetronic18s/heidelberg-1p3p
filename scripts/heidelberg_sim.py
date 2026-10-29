@@ -300,6 +300,10 @@ class Wallbox:
                 self.silent = words[1] == "on"
                 log(f"silent {words[1]}")
             elif words[:1] == ["phases"] and words[1:] in (["auto"], ["0"], ["1"], ["3"]):
+                if words[1] == "auto" and self.forced_phases is not None:
+                    # the feedback seen before forcing is stale (e.g. after a
+                    # power cut): wait for the next real one from the board
+                    self.esp_phases = 0
                 self.forced_phases = None if words[1] == "auto" else int(words[1])
                 log(f"phases {words[1]}")
             elif words[:1] in (["pv"], ["house"]) and len(words) == 2 and words[1].lstrip("-").isdigit():
