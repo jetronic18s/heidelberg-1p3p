@@ -796,6 +796,19 @@ def main():
         return 0
 
     b = Bench(load_env(), args.verbose)
+    try:
+        b.sim("json")
+    except OSError:
+        sys.exit(f"simulator not reachable on port {b.sim_port}: start the bench first, "
+                 "bench/start.sh (see bench/README.md)")
+    # Starting evcc here would race with bench/start.sh, which starts it once
+    # the simulated wallbox answers; tests that stop evcc start it themselves.
+    deadline = time.monotonic() + 90
+    while b.lp() is None:
+        if time.monotonic() > deadline:
+            sys.exit("evcc not reachable: start the bench with bench/start.sh and wait "
+                     "until it prints \"evcc UI: ...\"")
+        time.sleep(2)
     if args.soak:
         prepare(b)
         try:

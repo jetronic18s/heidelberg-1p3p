@@ -60,7 +60,14 @@ stop() {
   for name in evcc sim; do
     if [[ -f "$BENCH_DIR/$name.pid" ]]; then
       pid="$(cat "$BENCH_DIR/$name.pid")"
-      kill "$pid" 2>/dev/null && echo "stopped $name ($pid)" || true
+      if kill "$pid" 2>/dev/null; then
+        # evcc takes a moment to shut down and free its ports
+        for _ in $(seq 20); do
+          kill -0 "$pid" 2>/dev/null || break
+          sleep 0.5
+        done
+        echo "stopped $name ($pid)"
+      fi
       rm -f "$BENCH_DIR/$name.pid"
     fi
   done
@@ -74,6 +81,16 @@ run() {
     fi
   done
   stop >/dev/null
+
+  # A simulator or evcc not started by this script (e.g. a second start
+  # overwrote the pid files) still holds the ports: evcc would fail to start.
+  for port in "$EVCC_PORT" "$SIM_PORT"; do
+    if (echo > "/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+      echo "port $port is already in use, probably by an evcc or simulator not" >&2
+      echo "started by $0; stop it first, e.g.: pkill -f 'evcc --config $BENCH_DIR'" >&2
+      exit 1
+    fi
+  done
 
   echo 0 > "$BENCH_DIR/grid_power"
   : > "$BENCH_DIR/sim.log"
