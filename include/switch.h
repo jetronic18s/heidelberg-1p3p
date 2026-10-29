@@ -94,6 +94,9 @@
             uint32_t _wallboxOutages, _lastOutageEndMs, _lastOutageMs;
             uint32_t _evccTimeouts;
             uint16_t _hwMaxCurrent, _hwMinCurrent, _swRevision;
+            uint32_t _switchCount, _switchStartMs, _lastSwitchDoneMs, _lastSwitchMs;
+            uint8_t _lastSwitchFrom, _lastSwitchTo;
+            std::atomic<uint32_t> _lastClientAddr; // last Modbus TCP client, network order
             uint32_t _restartDeadlineMs;
             void handleRestart();
             void requestPhases(uint8_t phases);
@@ -101,6 +104,7 @@
             void checkEvccWatchdog();
             void checkWallboxSilent();
             void noteRtuResult(esp_err_t err);
+            void finishSwitchStats();
             void rememberCarState();
             void saveBootCache();
             void loadBootCache();
@@ -150,6 +154,10 @@
             std::string wallboxHistoryText();
             std::string wallboxInfoText();
             std::string evccStatusText();
+            std::string evccClientText();
+            std::string switchStatusText();
+            std::string contactorText();
+            bool bootCacheRestored();
             uint32_t getRtuMessageCount();
             uint32_t getRtuPendingRequestCount();
             uint32_t getRtuErrorCount();

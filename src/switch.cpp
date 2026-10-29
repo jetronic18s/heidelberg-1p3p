@@ -80,7 +80,8 @@ struct TcpClientContext {
 static void pinModeOutput(int pin)
 {
   gpio_reset_pin((gpio_num_t)pin);
-  gpio_set_direction((gpio_num_t)pin, GPIO_MODE_OUTPUT);
+  // input too, so the status page can read back the relay state
+  gpio_set_direction((gpio_num_t)pin, GPIO_MODE_INPUT_OUTPUT);
 }
 
 static void pinModeInput(int pin)
@@ -152,6 +153,13 @@ PhaseSwitch::PhaseSwitch()
   ,_hwMaxCurrent(0)
   ,_hwMinCurrent(0)
   ,_swRevision(0)
+  ,_switchCount(0)
+  ,_switchStartMs(0)
+  ,_lastSwitchDoneMs(0)
+  ,_lastSwitchMs(0)
+  ,_lastSwitchFrom(0)
+  ,_lastSwitchTo(0)
+  ,_lastClientAddr(0)
   ,_restartDeadlineMs(0)
 {}
 
@@ -549,6 +557,7 @@ void PhaseSwitch::loop(){
     if (masterReadInput(5, 1, &status) == ESP_OK && status != 10) {
       ESP_LOGI(TAG, "unlock confirmed");
       _lastWallboxOkMs = nowMs();
+      finishSwitchStats();
       _state = State::Running;
       return;
     }
@@ -556,6 +565,7 @@ void PhaseSwitch::loop(){
       ESP_LOGW(TAG, "timeout waiting for unlock, writing it again");
       masterWriteHolding(HEC_REG_REMOTE_LOCK, 1);
       _lastWallboxOkMs = nowMs();
+      finishSwitchStats();
       _state = State::Running;
       return;
     }
@@ -617,6 +627,10 @@ void PhaseSwitch::handleRestart(){
 void PhaseSwitch::switchTo1P(){
   if (!canSwitchTo1P()) return;
   rememberCarState();
+  _switchCount++;
+  _switchStartMs = nowMs();
+  _lastSwitchFrom = _desiredPhases;
+  _lastSwitchTo = 1;
   _desiredPhases = 1;
   _phaseSwitchRequested = true;
   _currentWrittenDuringSwitch = false;
@@ -626,6 +640,10 @@ void PhaseSwitch::switchTo1P(){
 void PhaseSwitch::switchTo3P(){
   if (!canSwitchTo3P()) return;
   rememberCarState();
+  _switchCount++;
+  _switchStartMs = nowMs();
+  _lastSwitchFrom = _desiredPhases;
+  _lastSwitchTo = 3;
   _desiredPhases = 3;
   _phaseSwitchRequested = true;
   _currentWrittenDuringSwitch = false;
@@ -657,7 +675,8 @@ uint8_t PhaseSwitch::reportedPhases(){
 // its own current again when it comes back.
 void PhaseSwitch::checkEvccWatchdog(){
   const uint32_t timeoutMs = _holdingRegister[HEC_REG_WATCHDOG - HOLDING_REG_OFFSET];
-  if (timeoutMs == 0 || _evccTimeout) return;
+  // Before evcc's first request the current is 0 A from the boot anyway.
+  if (timeoutMs == 0 || _evccTimeout || _lastBridgeRequestMs == 0) return;
   if (nowMs() - _lastBridgeRequestMs <= timeoutMs) return;
 
   uint16_t failsafe = _holdingRegister[HEC_REG_FAILSAFE_CURRENT - HOLDING_REG_OFFSET];
@@ -778,6 +797,49 @@ std::string PhaseSwitch::evccStatusText(){
   if (_evccTimeout) text += ", failsafe current active";
   return text;
 }
+
+void PhaseSwitch::finishSwitchStats(){
+  if (_switchStartMs == 0) return;
+  _lastSwitchDoneMs = nowMs();
+  _lastSwitchMs = _lastSwitchDoneMs - _switchStartMs;
+  _switchStartMs = 0;
+}
+
+std::string PhaseSwitch::switchStatusText(){
+  std::string text = std::to_string(_switchCount) + " since start";
+  if (_lastSwitchTo) {
+    text += ", last " + std::to_string(_lastSwitchFrom) + "p to " + std::to_string(_lastSwitchTo) + "p ";
+    if (_switchStartMs) {
+      text += "running for " + formatDuration(nowMs() - _switchStartMs);
+    } else {
+      text += formatDuration(nowMs() - _lastSwitchDoneMs) + " ago, took " + formatDuration(_lastSwitchMs);
+    }
+  }
+  const uint8_t requested = _requestedPhases;
+  if (requested) text += ", pending: " + std::to_string(requested) + "p";
+  return text;
+}
+
+std::string PhaseSwitch::contactorText(){
+  auto onOff = [](int level, int on) { return level == on ? "on" : "off"; };
+  return std::string("1p relay ") + onOff(readPin(PIN_1P_OUT), RELAY_ON)
+    + " / feedback " + onOff(readPin(PIN_1P_IN), 1)
+    + ", 3p relay " + onOff(readPin(PIN_3P_OUT), RELAY_ON)
+    + " / feedback " + onOff(readPin(PIN_3P_IN), 1);
+}
+
+std::string PhaseSwitch::evccClientText(){
+  const uint32_t addr = _lastClientAddr;
+  if (addr == 0) return "none yet";
+  char buf[48];
+  snprintf(buf, sizeof(buf), "%u.%u.%u.%u, %u connected",
+           (unsigned)(addr & 0xFF), (unsigned)(addr >> 8 & 0xFF),
+           (unsigned)(addr >> 16 & 0xFF), (unsigned)(addr >> 24),
+           (unsigned)_bridgeActiveClientCount);
+  return buf;
+}
+
+bool PhaseSwitch::bootCacheRestored(){ return _bootCacheValid; }
 
 std::string PhaseSwitch::wallboxInfoText(){
   if (_hwMaxCurrent == 0) return "unknown";
@@ -1033,6 +1095,7 @@ void PhaseSwitch::tcpBridgeTask()
       continue;
     }
     _bridgeActiveClientCount++;
+    _lastClientAddr = remote.sin_addr.s_addr;
     auto *ctx = new (std::nothrow) TcpClientContext{this, clientFd};
     if (!ctx) {
       _bridgeActiveClientCount--;
