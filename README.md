@@ -40,6 +40,7 @@ Fertige Firmware gibt es unter [Releases](https://github.com/jetronic18s/heidelb
 
 - **Update per OTA:** Weboberfläche → *Firmware update* → `heidelberg-1p3p-<version>.bin` hochladen. Der ESP stoppt vorher das Laden und sperrt die Wallbox, evcc nimmt das Laden danach wieder auf (im PV-Modus erst nach der eingestellten Einschaltverzögerung).
 - **Erstinstallation per USB-Seriell:** Flash-Bundle (ZIP) aus dem Release verwenden, Anleitung liegt als `README.txt` bei. Das Pinout zum Flashen: [Link](docs/Dingtian%20Relay%20Board%20ESP32%20Flash%20Pinout.jpg)
+- **Umstieg von zivillians Version** (Arduino, z. B. 0.0.2): Die Partitionstabelle ist anders, ein OTA-Update geht deshalb nicht. Einmal per USB-Seriell den Flash komplett löschen (`python3 -m esptool --port /dev/ttyUSB0 --chip esp32 erase-flash`) und dann das Flash-Bundle flashen. Danach sind keine Einstellungen mehr gespeichert: Ohne LAN startet das WLAN-Konfigurationsportal unter `http://192.168.4.1`, mit LAN ist die Weboberfläche unter der per DHCP vergebenen Adresse erreichbar. WLAN und Einstellungen dort neu einrichten. Alle weiteren Updates gehen per OTA.
 
 Die installierte Version steht unten auf der Statusseite (`Version`).
 

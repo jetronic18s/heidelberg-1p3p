@@ -57,6 +57,14 @@ jobs:
           - Use your local project's helper script:
             ./scripts/flash.sh /dev/ttyUSB0
 
+          Coming from zivillian's Arduino firmware (e.g. 0.0.2): the partition
+          table differs, so erase the whole flash once before step 2:
+
+             python3 -m esptool --port /dev/ttyUSB0 --chip esp32 erase-flash
+
+          This also erases WiFi credentials and settings; set them up again in
+          the web UI (without LAN: setup portal at http://192.168.4.1).
+
           Notes:
           - The addresses above match the project's ESP-IDF build output.
           - If flashing fails, reduce baud rate (for example: 115200).
