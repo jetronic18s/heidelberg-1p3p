@@ -706,6 +706,7 @@ uint8_t PhaseSwitch::reportedPhases(){
 // apply the failsafe current (register 262), as the wallbox would. evcc sets
 // its own current again when it comes back.
 void PhaseSwitch::checkEvccWatchdog(){
+  std::lock_guard<std::mutex> lock(_evccMutex);
   const uint32_t timeoutMs = _holdingRegister[HEC_REG_WATCHDOG - HOLDING_REG_OFFSET];
   // Before evcc's first request the current is 0 A from the boot anyway.
   if (timeoutMs == 0 || _evccTimeout || _lastBridgeRequestMs == 0) return;
@@ -1223,10 +1224,13 @@ bool PhaseSwitch::handleModbusRequest(uint8_t unitId, const uint8_t* pdu, size_t
     return true;
   }
 
-  _lastBridgeRequestMs = nowMs();
-  if (_evccTimeout) {
-    _evccTimeout = false;
-    ESP_LOGI(TAG, "evcc is back");
+  {
+    std::lock_guard<std::mutex> lock(_evccMutex);
+    _lastBridgeRequestMs = nowMs();
+    if (_evccTimeout) {
+      _evccTimeout = false;
+      ESP_LOGI(TAG, "evcc is back");
+    }
   }
 
   switch (fc) {

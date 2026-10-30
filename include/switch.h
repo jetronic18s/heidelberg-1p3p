@@ -88,6 +88,9 @@
             std::atomic<uint8_t> _requestedPhases; // phases requested outside Running, 0 = none
             std::atomic<uint32_t> _lastBridgeRequestMs; // last Modbus TCP request (evcc)
             std::atomic<bool> _evccTimeout; // failsafe current applied, evcc silent
+            // Keeps a request from evcc out of the watchdog's check and failsafe
+            // write, so the failsafe cannot overwrite evcc's next current.
+            std::mutex _evccMutex;
             std::atomic<uint32_t> _lastWallboxOkMs; // last successful Modbus RTU transaction
             std::atomic<bool> _wallboxSilent; // wallbox not answering in Running
             uint32_t _wallboxSilentSinceMs;
