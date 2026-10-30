@@ -380,6 +380,7 @@ esp_err_t PhaseSwitch::masterWriteMultipleHolding(uint16_t addr, uint16_t count,
 }
 
 void PhaseSwitch::loop(){
+  std::lock_guard<std::mutex> lock(_stateMutex);
   if (_restartRequested) {
     handleRestart();
     return;
@@ -459,12 +460,12 @@ void PhaseSwitch::loop(){
     const uint8_t requested = _requestedPhases.exchange(0);
     if (requested == 1 && _desiredPhases != 1) {
       ESP_LOGI(TAG, "running the pending switch to 1p");
-      switchTo1P();
+      startSwitch(1);
       return;
     }
     if (requested == 3 && _desiredPhases != 3) {
       ESP_LOGI(TAG, "running the pending switch to 3p");
-      switchTo3P();
+      startSwitch(3);
       return;
     }
     
@@ -656,39 +657,38 @@ void PhaseSwitch::handleRestart(){
   }
 }
 
-void PhaseSwitch::switchTo1P(){
-  if (!canSwitchTo1P()) return;
+// Callers hold _stateMutex.
+void PhaseSwitch::startSwitch(uint8_t phases){
+  if (phases == 1 ? !canSwitchTo1P() : !canSwitchTo3P()) return;
   rememberCarState();
   _switchCount++;
   _switchStartMs = nowMs();
   _lastSwitchFrom = _desiredPhases;
-  _lastSwitchTo = 1;
-  _desiredPhases = 1;
+  _lastSwitchTo = phases;
+  _desiredPhases = phases;
   _phaseSwitchRequested = true;
   _currentWrittenDuringSwitch = false;
   _state = State::SwitchPhases;
 }
 
+void PhaseSwitch::switchTo1P(){
+  std::lock_guard<std::mutex> lock(_stateMutex);
+  startSwitch(1);
+}
+
 void PhaseSwitch::switchTo3P(){
-  if (!canSwitchTo3P()) return;
-  rememberCarState();
-  _switchCount++;
-  _switchStartMs = nowMs();
-  _lastSwitchFrom = _desiredPhases;
-  _lastSwitchTo = 3;
-  _desiredPhases = 3;
-  _phaseSwitchRequested = true;
-  _currentWrittenDuringSwitch = false;
-  _state = State::SwitchPhases;
+  std::lock_guard<std::mutex> lock(_stateMutex);
+  startSwitch(3);
 }
 
 // Phase request from evcc (register 4). Outside Running the request is kept
 // and run once the board is back in Running, so evcc's request is never
 // dropped and reading register 4 returns what evcc asked for.
 void PhaseSwitch::requestPhases(uint8_t phases){
+  std::lock_guard<std::mutex> lock(_stateMutex);
   if (_state == State::Running && _firmwareSupported) {
     _requestedPhases = 0;
-    if (phases == 1) switchTo1P(); else switchTo3P();
+    startSwitch(phases);
     return;
   }
   _requestedPhases = phases;

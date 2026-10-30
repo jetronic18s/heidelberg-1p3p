@@ -3,6 +3,7 @@
     #include <cstddef>
     #include <cstdint>
     #include <atomic>
+    #include <mutex>
     #include <string>
     #include <vector>
     #include "freertos/FreeRTOS.h"
@@ -47,7 +48,7 @@
         private:
             uint32_t _previous;
             uint32_t _delay;
-            State _state;
+            std::atomic<State> _state; // read by the bridge tasks without the mutex
             uint8_t _desiredPhases;
             bool _phaseSwitchRequested; // false while the boot sequence runs
             bool _currentWrittenDuringSwitch; // evcc set the current for the new phase count
@@ -81,6 +82,9 @@
             uint32_t _unlockDeadlineMs;
             std::atomic<bool> _restartRequested;
             std::atomic<bool> _updateInProgress;
+            // The main loop, the bridge tasks (evcc) and the web page start
+            // switches; the loop holds it for a whole pass.
+            std::mutex _stateMutex;
             std::atomic<uint8_t> _requestedPhases; // phases requested outside Running, 0 = none
             std::atomic<uint32_t> _lastBridgeRequestMs; // last Modbus TCP request (evcc)
             std::atomic<bool> _evccTimeout; // failsafe current applied, evcc silent
@@ -102,6 +106,7 @@
             uint32_t _restartDeadlineMs;
             void handleRestart();
             void requestPhases(uint8_t phases);
+            void startSwitch(uint8_t phases);
             uint8_t reportedPhases();
             void checkEvccWatchdog();
             void checkWallboxSilent();
