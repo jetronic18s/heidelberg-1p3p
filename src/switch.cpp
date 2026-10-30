@@ -23,6 +23,14 @@ static uint32_t nowMs()
   return (uint32_t)(esp_timer_get_time() / 1000ULL);
 }
 
+// Time since a timestamp the other task may update. Read it before the clock:
+// a newer value stored in between would wrap the difference to ~49 days.
+static uint32_t msSince(const std::atomic<uint32_t>& stamp)
+{
+  const uint32_t then = stamp;
+  return nowMs() - then;
+}
+
 static constexpr uint16_t SAFETY_FAULT_NONE = 0x0000;
 static constexpr uint16_t SAFETY_FAULT_FEEDBACK_BOTH_ACTIVE = 0xE101;
 static constexpr uint16_t SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT = 0xE102;
@@ -701,7 +709,7 @@ void PhaseSwitch::checkEvccWatchdog(){
   const uint32_t timeoutMs = _holdingRegister[HEC_REG_WATCHDOG - HOLDING_REG_OFFSET];
   // Before evcc's first request the current is 0 A from the boot anyway.
   if (timeoutMs == 0 || _evccTimeout || _lastBridgeRequestMs == 0) return;
-  if (nowMs() - _lastBridgeRequestMs <= timeoutMs) return;
+  if (msSince(_lastBridgeRequestMs) <= timeoutMs) return;
 
   uint16_t failsafe = _holdingRegister[HEC_REG_FAILSAFE_CURRENT - HOLDING_REG_OFFSET];
   if (failsafe < HEC_MIN_CURRENT) failsafe = 0; // 1..59 means 0 A for the Heidelberg
@@ -745,7 +753,7 @@ void PhaseSwitch::noteRtuResult(esp_err_t err){
 // wallbox answers again.
 void PhaseSwitch::checkWallboxSilent(){
   if (_wallboxSilent) return;
-  if (nowMs() - _lastWallboxOkMs <= WALLBOX_SILENT_TIMEOUT_MS) return;
+  if (msSince(_lastWallboxOkMs) <= WALLBOX_SILENT_TIMEOUT_MS) return;
   _wallboxSilentSinceMs = _lastWallboxOkMs;
   _wallboxOutages++;
   _wallboxSilent = true;
@@ -811,7 +819,7 @@ std::string PhaseSwitch::wallboxHistoryText(){
   }
   if (_lastRtuErrorMs) {
     text += "; last error: " + std::string(rtuErrorName(_lastRtuError)) + " "
-      + formatDuration(nowMs() - _lastRtuErrorMs) + " ago";
+      + formatDuration(msSince(_lastRtuErrorMs)) + " ago";
   }
   return text;
 }
