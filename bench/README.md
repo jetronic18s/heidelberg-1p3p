@@ -255,6 +255,7 @@ known problem.
 | 23 | Power loss while charging | board and simulated wallbox off for 15 s while charging on 3p: the status page reports a power-on restart, evcc charges again (`exception '11'` until the wallbox answers, `phases mismatch` once because the board boots on 1p) |
 | 24 | Power loss without car | the same without a car: no phantom car connect in evcc |
 | 25 | Disable after a switch | evcc switches to 1p and disables charging right after it: the current stays at 0 A |
+| 26 | Busy Modbus TCP | 5 minutes of fast requests to the bridge while charging: no false evcc timeout or wallbox outage, the current never drops to 0 A |
 
 ### Known problems
 

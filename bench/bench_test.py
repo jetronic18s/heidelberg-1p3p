@@ -692,6 +692,38 @@ def test_dead_wallbox(b):
     b.wait(lambda: b.lp() and b.lp()["chargerPhases1p3p"], 60, "evcc charger back")
 
 
+def test_busy_bridge(b):
+    """Busy Modbus TCP: many requests while charging, no false evcc timeout"""
+    b.start_charging()
+    before = b.esp_status_page()
+    b.mark_log()
+    # Register 4 is answered by the board itself, so the requests come fast and
+    # often land while the main loop checks the evcc watchdog.
+    end, requests = time.monotonic() + 300, 0
+    with socket.create_connection((b.esp_ip, 502), timeout=5) as conn:
+        while time.monotonic() < end:
+            tid = requests % 0x10000
+            conn.sendall(struct.pack(">HHHBBHH", tid, 0, 6, 1, 3, 4, 1))
+            reply = conn.recv(256)
+            if len(reply) < 9 or reply[7] & 0x80:
+                raise TestFailure(f"read of register 4 failed: {reply.hex()}")
+            requests += 1
+    after = b.esp_status_page()
+    b.note(f"{requests} requests in 300 s")
+    count = lambda page, pattern: int((re.search(pattern, page) or [0, 0])[1])
+    timeouts = [count(p, r"(\d+) timeouts since power-on") for p in (before, after)]
+    outages = [count(p, r"(\d+)x not responding") for p in (before, after)]
+    if timeouts[1] != timeouts[0]:
+        raise TestFailure(f"false evcc timeouts: {timeouts[0]} -> {timeouts[1]}")
+    if outages[1] != outages[0]:
+        raise TestFailure(f"false wallbox outages: {outages[0]} -> {outages[1]}")
+    if any("max current 0.0" in line for line in b.sim_log_since_mark()):
+        raise TestFailure("the current dropped to 0 A while charging")
+    if not b.charging():
+        raise TestFailure("charging stopped")
+    b.check_log()
+
+
 TESTS = [
     test_boot, test_pv_charging, test_auto_1p, test_auto_3p, test_manual_switch,
     test_current_after_switch, test_switch_without_evcc, test_switch_while_disabled,
@@ -699,7 +731,7 @@ TESTS = [
     test_unplug, test_unplug_during_restart, test_plug_during_switch, test_double_switch,
     test_house_spike, test_mode_off, test_evcc_restart, test_evcc_down, test_wallbox_dies,
     test_dead_wallbox, test_power_loss_charging, test_power_loss_no_car,
-    test_disable_after_switch,
+    test_disable_after_switch, test_busy_bridge,
 ]
 
 # tests that end in a safety fault on purpose
