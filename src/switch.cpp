@@ -723,6 +723,7 @@ void PhaseSwitch::checkEvccWatchdog(){
 }
 
 void PhaseSwitch::noteRtuResult(esp_err_t err){
+  std::lock_guard<std::mutex> lock(_rtuStatsMutex);
   const uint32_t now = nowMs();
   // error rate per minute: the last complete minute is shown
   if (now - _rtuWindowStartMs >= 60000) {
@@ -753,9 +754,10 @@ void PhaseSwitch::noteRtuResult(esp_err_t err){
 // it, answer evcc with "gateway target failed", and carry on as soon as the
 // wallbox answers again.
 void PhaseSwitch::checkWallboxSilent(){
+  std::lock_guard<std::mutex> lock(_rtuStatsMutex);
   if (_wallboxSilent) return;
   if (msSince(_lastWallboxOkMs) <= WALLBOX_SILENT_TIMEOUT_MS) return;
-  _wallboxSilentSinceMs = _lastWallboxOkMs;
+  _wallboxSilentSinceMs = _lastWallboxOkMs.load();
   _wallboxOutages++;
   _wallboxSilent = true;
   ESP_LOGW(TAG, "wallbox not responding for %u s", (unsigned)(WALLBOX_SILENT_TIMEOUT_MS / 1000));
@@ -764,7 +766,7 @@ void PhaseSwitch::checkWallboxSilent(){
 bool PhaseSwitch::isWallboxSilent(){ return _wallboxSilent; }
 
 uint32_t PhaseSwitch::wallboxSilentForMs(){
-  return _wallboxSilent ? nowMs() - _wallboxSilentSinceMs : 0;
+  return _wallboxSilent ? msSince(_wallboxSilentSinceMs) : 0;
 }
 
 // "1.2 s", "14 min", "3.5 h"
@@ -788,21 +790,20 @@ static const char *rtuErrorName(esp_err_t err)
 }
 
 std::string PhaseSwitch::wallboxStatusText(){
-  const uint32_t now = nowMs();
   if (!_masterStarted) {
     return _master_handle ? "RS485 master not started" : "RS485 not started yet";
   }
   if (_wallboxSilent) {
-    return "not responding for " + formatDuration(now - _wallboxSilentSinceMs)
+    return "not responding for " + formatDuration(msSince(_wallboxSilentSinceMs))
       + " (" + rtuErrorName(_lastRtuError) + ")";
   }
   if (_lastWallboxOkMs == 0) return "not detected yet";
-  std::string text = "ok, last answer " + formatDuration(now - _lastWallboxOkMs) + " ago";
+  std::string text = "ok, last answer " + formatDuration(msSince(_lastWallboxOkMs)) + " ago";
   const bool prev = _rtuPrevValid;
   const uint32_t msgs = prev ? _rtuPrevMsgs : _rtuWindowMsgs;
   const uint32_t errs = prev ? _rtuPrevErrs : _rtuWindowErrs;
   text += ", " + std::to_string(errs) + "/" + std::to_string(msgs) + " errors ("
-    + (prev ? "last minute" : "since " + formatDuration(now - _rtuWindowStartMs)) + ")";
+    + (prev ? "last minute" : "since " + formatDuration(msSince(_rtuWindowStartMs))) + ")";
   return text;
 }
 
@@ -814,7 +815,7 @@ std::string PhaseSwitch::wallboxHistoryText(){
   } else {
     text = std::to_string(outages) + "x not responding since power-on";
     if (_lastOutageEndMs) {
-      text += ", last " + formatDuration(nowMs() - _lastOutageEndMs) + " ago for "
+      text += ", last " + formatDuration(msSince(_lastOutageEndMs)) + " ago for "
         + formatDuration(_lastOutageMs);
     }
   }

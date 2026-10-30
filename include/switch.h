@@ -93,14 +93,16 @@
             std::mutex _evccMutex;
             std::atomic<uint32_t> _lastWallboxOkMs; // last successful Modbus RTU transaction
             std::atomic<bool> _wallboxSilent; // wallbox not answering in Running
-            uint32_t _wallboxSilentSinceMs;
+            std::atomic<uint32_t> _wallboxSilentSinceMs;
             // wallbox and evcc diagnostics for the status page
             std::atomic<uint32_t> _rtuWindowStartMs, _rtuWindowMsgs, _rtuWindowErrs;
             std::atomic<uint32_t> _rtuPrevMsgs, _rtuPrevErrs;
             std::atomic<bool> _rtuPrevValid;
             std::atomic<esp_err_t> _lastRtuError;
             std::atomic<uint32_t> _lastRtuErrorMs;
-            uint32_t _wallboxOutages, _lastOutageEndMs, _lastOutageMs;
+            std::atomic<uint32_t> _wallboxOutages, _lastOutageEndMs, _lastOutageMs;
+            // RTU results come from the main loop and the bridge tasks
+            std::mutex _rtuStatsMutex;
             uint32_t _evccTimeouts;
             uint16_t _hwMaxCurrent, _hwMinCurrent, _swRevision;
             uint32_t _switchCount, _switchStartMs, _lastSwitchDoneMs, _lastSwitchMs;
