@@ -67,9 +67,10 @@
             uint8_t _serverId;
             int _listenFd;
             bool _tcpServerStarted;
-            uint32_t _rtuMessageCount;
-            uint32_t _rtuPendingRequestCount;
-            uint32_t _rtuErrorCount;
+            // RTU requests come from the main loop and the Modbus TCP bridge task
+            std::atomic<uint32_t> _rtuMessageCount;
+            std::atomic<uint32_t> _rtuPendingRequestCount;
+            std::atomic<uint32_t> _rtuErrorCount;
             uint32_t _bridgeMessageCount;
             uint32_t _bridgeActiveClientCount;
             uint32_t _bridgeErrorCount;
