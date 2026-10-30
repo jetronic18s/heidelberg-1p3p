@@ -49,25 +49,29 @@
             uint32_t _previous;
             uint32_t _delay;
             std::atomic<State> _state; // read by the bridge tasks without the mutex
-            uint8_t _desiredPhases;
+            std::atomic<uint8_t> _desiredPhases;
             bool _phaseSwitchRequested; // false while the boot sequence runs
             bool _currentWrittenDuringSwitch; // evcc set the current for the new phase count
-            bool _switchingSupported;
-            bool _firmwareSupported;
-            bool _bootCacheValid; // cache restored from before a software restart
+            std::atomic<bool> _switchingSupported;
+            std::atomic<bool> _firmwareSupported;
+            std::atomic<bool> _bootCacheValid; // cache restored from before a software restart
             uint16_t _reportedStatus; // charging state reported outside Running
             std::vector<uint16_t> _inputRegister;
             std::vector<uint16_t> _holdingRegister;
-            uint32_t _switchDelay;
+            // Protects _inputRegister, _holdingRegister, _reportedStatus,
+            // _phaseSwitchRequested and _currentWrittenDuringSwitch across the
+            // main loop, the Modbus TCP bridge tasks and the web server.
+            std::mutex _cacheMutex;
+            std::atomic<uint32_t> _switchDelay;
             bool validateSetup();
             uint8_t getActivePhases();
             //modbus
             void* _master_handle;
-            bool _masterStarted;
+            std::atomic<bool> _masterStarted;
             TaskHandle_t _tcpTaskHandle;
             uint8_t _serverId;
             int _listenFd;
-            bool _tcpServerStarted;
+            std::atomic<bool> _tcpServerStarted;
             // RTU requests come from the main loop and the Modbus TCP bridge task
             std::atomic<uint32_t> _rtuMessageCount;
             std::atomic<uint32_t> _rtuPendingRequestCount;
@@ -106,10 +110,10 @@
             // RTU results come from the main loop and the bridge tasks
             std::mutex _rtuStatsMutex;
             std::atomic<uint32_t> _evccTimeouts;
-            uint16_t _hwMaxCurrent, _hwMinCurrent, _swRevision;
+            std::atomic<uint16_t> _hwMaxCurrent, _hwMinCurrent, _swRevision;
             std::atomic<uint32_t> _switchCount; // read by the web page
-            uint32_t _switchStartMs, _lastSwitchDoneMs, _lastSwitchMs;
-            uint8_t _lastSwitchFrom, _lastSwitchTo;
+            std::atomic<uint32_t> _switchStartMs, _lastSwitchDoneMs, _lastSwitchMs;
+            std::atomic<uint8_t> _lastSwitchFrom, _lastSwitchTo;
             std::atomic<uint32_t> _lastClientAddr; // last Modbus TCP client, network order
             uint32_t _restartDeadlineMs;
             void handleRestart();

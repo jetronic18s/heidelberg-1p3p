@@ -192,9 +192,12 @@ void PhaseSwitch::loadBootCache(){
     && s_bootCache.magic == BOOT_CACHE_MAGIC
     && s_bootCache.crc == bootCacheCrc(s_bootCache);
   if (valid) {
-    _inputRegister.assign(s_bootCache.input, s_bootCache.input + 20);
-    _holdingRegister.assign(s_bootCache.holding, s_bootCache.holding + 10);
-    _reportedStatus = s_bootCache.reportedStatus;
+    {
+      std::lock_guard<std::mutex> lock(_cacheMutex);
+      _inputRegister.assign(s_bootCache.input, s_bootCache.input + 20);
+      _holdingRegister.assign(s_bootCache.holding, s_bootCache.holding + 10);
+      _reportedStatus = s_bootCache.reportedStatus;
+    }
     // Boot with the phases from before the restart, as evcc expects them.
     if (s_bootCache.desiredPhases == 1 || s_bootCache.desiredPhases == 3) {
       _desiredPhases = s_bootCache.desiredPhases;
@@ -204,16 +207,19 @@ void PhaseSwitch::loadBootCache(){
     _evccTimeouts = s_bootCache.evccTimeouts;
     _bootCacheValid = true;
     ESP_LOGI(TAG, "restored register cache from before the restart, status %u, %up",
-             _reportedStatus, _desiredPhases);
+             s_bootCache.reportedStatus, _desiredPhases.load());
   }
   s_bootCache.magic = 0;
 }
 
 void PhaseSwitch::saveBootCache(){
   if (!_firmwareSupported && !_bootCacheValid) return;
-  std::copy(_inputRegister.begin(), _inputRegister.end(), s_bootCache.input);
-  std::copy(_holdingRegister.begin(), _holdingRegister.end(), s_bootCache.holding);
-  s_bootCache.reportedStatus = _reportedStatus;
+  {
+    std::lock_guard<std::mutex> lock(_cacheMutex);
+    std::copy(_inputRegister.begin(), _inputRegister.end(), s_bootCache.input);
+    std::copy(_holdingRegister.begin(), _holdingRegister.end(), s_bootCache.holding);
+    s_bootCache.reportedStatus = _reportedStatus;
+  }
   s_bootCache.desiredPhases = reportedPhases(); // a pending request wins
   s_bootCache.switchCount = _switchCount;
   s_bootCache.wallboxOutages = _wallboxOutages;
@@ -232,6 +238,7 @@ void PhaseSwitch::restartNow(){
 // avoids a phantom "car connected" in evcc. Errors and "locked" keep the
 // previous guess.
 void PhaseSwitch::rememberCarState(){
+  std::lock_guard<std::mutex> lock(_cacheMutex);
   const uint16_t status = _inputRegister[5];
   if (status == 2 || status == 3) {
     _reportedStatus = HEC_STATUS_A1;
@@ -563,12 +570,15 @@ void PhaseSwitch::loop(){
     // again while its target stays the same. A current from before the switch
     // is capped to the minimum: it was meant for the old phase count.
     uint16_t restartCurrent = 0;
-    if (_phaseSwitchRequested) {
-      uint16_t cached = _holdingRegister[HEC_REG_MAX_CURRENT - HOLDING_REG_OFFSET];
-      if (_currentWrittenDuringSwitch) {
-        restartCurrent = cached;
-      } else {
-        restartCurrent = cached < HEC_MIN_CURRENT ? cached : HEC_MIN_CURRENT;
+    {
+      std::lock_guard<std::mutex> cacheLock(_cacheMutex);
+      if (_phaseSwitchRequested) {
+        uint16_t cached = _holdingRegister[HEC_REG_MAX_CURRENT - HOLDING_REG_OFFSET];
+        if (_currentWrittenDuringSwitch) {
+          restartCurrent = cached;
+        } else {
+          restartCurrent = cached < HEC_MIN_CURRENT ? cached : HEC_MIN_CURRENT;
+        }
       }
     }
     if (masterWriteHolding(HEC_REG_MAX_CURRENT, restartCurrent) != ESP_OK) return;
@@ -576,8 +586,11 @@ void PhaseSwitch::loop(){
     // Release the remote lock only once the restart current is in place.
     if (masterWriteHolding(HEC_REG_REMOTE_LOCK, 1) != ESP_OK) return;
 
-    _phaseSwitchRequested = false;
-    _currentWrittenDuringSwitch = false;
+    {
+      std::lock_guard<std::mutex> cacheLock(_cacheMutex);
+      _phaseSwitchRequested = false;
+      _currentWrittenDuringSwitch = false;
+    }
     _state = State::Unlocking;
     _unlockDeadlineMs = nowMs() + UNLOCK_CONFIRM_TIMEOUT_MS;
     ESP_LOGI(TAG, "restored registers, max current %u.%u A", restartCurrent / 10, restartCurrent % 10);
@@ -661,13 +674,16 @@ void PhaseSwitch::handleRestart(){
 void PhaseSwitch::startSwitch(uint8_t phases){
   if (phases == 1 ? !canSwitchTo1P() : !canSwitchTo3P()) return;
   rememberCarState();
-  _switchCount++;
-  _switchStartMs = nowMs();
-  _lastSwitchFrom = _desiredPhases;
+  _lastSwitchFrom = _desiredPhases.load();
   _lastSwitchTo = phases;
+  _switchStartMs = nowMs();
+  _switchCount++;
   _desiredPhases = phases;
-  _phaseSwitchRequested = true;
-  _currentWrittenDuringSwitch = false;
+  {
+    std::lock_guard<std::mutex> cacheLock(_cacheMutex);
+    _phaseSwitchRequested = true;
+    _currentWrittenDuringSwitch = false;
+  }
   _state = State::SwitchPhases;
 }
 
@@ -697,7 +713,7 @@ void PhaseSwitch::requestPhases(uint8_t phases){
 
 uint8_t PhaseSwitch::reportedPhases(){
   const uint8_t requested = _requestedPhases;
-  return requested ? requested : _desiredPhases;
+  return requested ? requested : _desiredPhases.load();
 }
 
 // The ESP32 polls the wallbox every 2 s and so keeps the Heidelberg's own
@@ -707,12 +723,12 @@ uint8_t PhaseSwitch::reportedPhases(){
 // its own current again when it comes back.
 void PhaseSwitch::checkEvccWatchdog(){
   std::lock_guard<std::mutex> lock(_evccMutex);
-  const uint32_t timeoutMs = _holdingRegister[HEC_REG_WATCHDOG - HOLDING_REG_OFFSET];
+  const uint32_t timeoutMs = getHoldingRegister(HEC_REG_WATCHDOG);
   // Before evcc's first request the current is 0 A from the boot anyway.
   if (timeoutMs == 0 || _evccTimeout || _lastBridgeRequestMs == 0) return;
   if (msSince(_lastBridgeRequestMs) <= timeoutMs) return;
 
-  uint16_t failsafe = _holdingRegister[HEC_REG_FAILSAFE_CURRENT - HOLDING_REG_OFFSET];
+  uint16_t failsafe = getHoldingRegister(HEC_REG_FAILSAFE_CURRENT);
   if (failsafe < HEC_MIN_CURRENT) failsafe = 0; // 1..59 means 0 A for the Heidelberg
   if (masterWriteHolding(HEC_REG_MAX_CURRENT, failsafe) != ESP_OK) return;
   cacheHolding(HEC_REG_MAX_CURRENT, &failsafe, 1);
@@ -829,27 +845,31 @@ std::string PhaseSwitch::wallboxHistoryText(){
 std::string PhaseSwitch::evccStatusText(){
   const uint32_t last = _lastBridgeRequestMs;
   if (last == 0) return "no request yet";
-  std::string text = "last request " + formatDuration(nowMs() - last) + " ago, "
+  std::string text = "last request " + formatDuration(msSince(_lastBridgeRequestMs)) + " ago, "
     + std::to_string(_evccTimeouts) + " timeouts since power-on";
   if (_evccTimeout) text += ", failsafe current active";
   return text;
 }
 
 void PhaseSwitch::finishSwitchStats(){
-  if (_switchStartMs == 0) return;
-  _lastSwitchDoneMs = nowMs();
-  _lastSwitchMs = _lastSwitchDoneMs - _switchStartMs;
+  const uint32_t start = _switchStartMs;
+  if (start == 0) return;
+  const uint32_t done = nowMs();
+  _lastSwitchMs = done - start;
+  _lastSwitchDoneMs = done;
   _switchStartMs = 0;
 }
 
 std::string PhaseSwitch::switchStatusText(){
   std::string text = std::to_string(_switchCount) + " since power-on";
-  if (_lastSwitchTo) {
-    text += ", last " + std::to_string(_lastSwitchFrom) + "p to " + std::to_string(_lastSwitchTo) + "p ";
-    if (_switchStartMs) {
-      text += "running for " + formatDuration(nowMs() - _switchStartMs);
+  const uint8_t to = _lastSwitchTo;
+  if (to) {
+    text += ", last " + std::to_string(_lastSwitchFrom) + "p to " + std::to_string(to) + "p ";
+    const uint32_t start = _switchStartMs;
+    if (start) {
+      text += "running for " + formatDuration(nowMs() - start);
     } else {
-      text += formatDuration(nowMs() - _lastSwitchDoneMs) + " ago, took " + formatDuration(_lastSwitchMs);
+      text += formatDuration(msSince(_lastSwitchDoneMs)) + " ago, took " + formatDuration(_lastSwitchMs);
     }
   }
   const uint8_t requested = _requestedPhases;
@@ -974,6 +994,7 @@ std::string PhaseSwitch::getSafetyFaultText(){
 }
 
 uint16_t PhaseSwitch::getHoldingRegister(size_t reg){
+  std::lock_guard<std::mutex> lock(_cacheMutex);
   if (reg < HOLDING_REG_OFFSET) return 0xffff;
   size_t idx = reg - HOLDING_REG_OFFSET;
   if (idx >= _holdingRegister.size()) return 0xffff;
@@ -981,22 +1002,27 @@ uint16_t PhaseSwitch::getHoldingRegister(size_t reg){
 }
 
 uint16_t PhaseSwitch::getInputRegister(size_t reg){
+  std::lock_guard<std::mutex> lock(_cacheMutex);
   if (reg >= _inputRegister.size()) return 0xffff;
   return _inputRegister[reg];
 }
 
 bool PhaseSwitch::updateCachedRegisters(){
   if (!_master_handle) return false;
-  esp_err_t err = masterReadInput(4, 15, &_inputRegister[4]);
+  uint16_t input[15];
+  esp_err_t err = masterReadInput(4, 15, input);
   if (err != ESP_OK) {
       ESP_LOGE(TAG, "masterReadInput failed: 0x%x (%s)", err, esp_err_to_name(err));
       return false;
   }
-  err = masterReadHolding(257, 6, &_holdingRegister[257 - HOLDING_REG_OFFSET]);
+  cacheInput(4, input, 15);
+  uint16_t holding[6];
+  err = masterReadHolding(257, 6, holding);
   if (err != ESP_OK) {
       ESP_LOGE(TAG, "masterReadHolding failed: 0x%x (%s)", err, esp_err_to_name(err));
       return false;
   }
+  cacheHolding(257, holding, 6);
   return true;
 }
 
@@ -1369,11 +1395,12 @@ bool PhaseSwitch::handleWriteHolding(uint8_t, uint16_t addr, uint16_t value, std
   }
   // While Unlocking the wallbox answers again; only reads still come from the cache.
   if (servesFromCache() && _state != State::Unlocking) {
+    std::lock_guard<std::mutex> lock(_cacheMutex);
     if (addr < HOLDING_REG_OFFSET || (addr - HOLDING_REG_OFFSET) >= _holdingRegister.size()) {
       buildException(FC_WRITE_HOLDING, EX_ILLEGAL_DATA_ADDRESS, responsePdu);
       return true;
     }
-    cacheHolding(addr, &value, 1);
+    _holdingRegister[addr - HOLDING_REG_OFFSET] = value;
     if (_phaseSwitchRequested && addr == HEC_REG_MAX_CURRENT) {
       _currentWrittenDuringSwitch = true;
     }
@@ -1402,11 +1429,15 @@ bool PhaseSwitch::handleWriteMultiple(uint8_t, uint16_t addr, uint16_t count, co
   }
   // While Unlocking the wallbox answers again; only reads still come from the cache.
   if (servesFromCache() && _state != State::Unlocking) {
+    std::lock_guard<std::mutex> lock(_cacheMutex);
     if (addr < HOLDING_REG_OFFSET || (addr - HOLDING_REG_OFFSET + count) > _holdingRegister.size()) {
       buildException(FC_WRITE_MULTIPLE, EX_ILLEGAL_DATA_ADDRESS, responsePdu);
       return true;
     }
-    cacheHolding(addr, values, count);
+    size_t idx = addr - HOLDING_REG_OFFSET;
+    for (uint16_t i = 0; i < count; i++) {
+      _holdingRegister[idx + i] = values[i];
+    }
     if (_phaseSwitchRequested && addr <= HEC_REG_MAX_CURRENT && HEC_REG_MAX_CURRENT < addr + count) {
       _currentWrittenDuringSwitch = true;
     }
@@ -1448,6 +1479,7 @@ void PhaseSwitch::buildReadResponse(uint8_t functionCode, const uint16_t* values
 void PhaseSwitch::cacheHolding(uint16_t addr, const uint16_t* values, uint16_t count)
 {
   if (!values || addr < HOLDING_REG_OFFSET) return;
+  std::lock_guard<std::mutex> lock(_cacheMutex);
   size_t idx = addr - HOLDING_REG_OFFSET;
   if (idx + count > _holdingRegister.size()) return;
   for (uint16_t i = 0; i < count; i++) {
@@ -1457,7 +1489,9 @@ void PhaseSwitch::cacheHolding(uint16_t addr, const uint16_t* values, uint16_t c
 
 void PhaseSwitch::cacheInput(uint16_t addr, const uint16_t* values, uint16_t count)
 {
-  if (!values || (size_t)addr + count > _inputRegister.size()) return;
+  if (!values) return;
+  std::lock_guard<std::mutex> lock(_cacheMutex);
+  if ((size_t)addr + count > _inputRegister.size()) return;
   for (uint16_t i = 0; i < count; i++) {
     _inputRegister[addr + i] = values[i];
   }
@@ -1466,6 +1500,7 @@ void PhaseSwitch::cacheInput(uint16_t addr, const uint16_t* values, uint16_t cou
 bool PhaseSwitch::readCachedHolding(uint16_t addr, uint16_t count, std::vector<uint16_t>& values)
 {
   if (addr < HOLDING_REG_OFFSET) return false;
+  std::lock_guard<std::mutex> lock(_cacheMutex);
   size_t idx = addr - HOLDING_REG_OFFSET;
   if (idx + count > _holdingRegister.size()) return false;
 
@@ -1481,6 +1516,7 @@ bool PhaseSwitch::readCachedHolding(uint16_t addr, uint16_t count, std::vector<u
 
 bool PhaseSwitch::readCachedInput(uint16_t addr, uint16_t count, std::vector<uint16_t>& values)
 {
+  std::lock_guard<std::mutex> lock(_cacheMutex);
   if (addr < 4 || (size_t)addr + count > _inputRegister.size()) return false;
 
   values.resize(count);
