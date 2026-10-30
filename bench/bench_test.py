@@ -19,6 +19,7 @@ import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -615,6 +616,11 @@ def test_wallbox_dies(b):
     b.note(f"status page: {history.group(1) if history else '?'}")
     if not history or "not responding since power-on, last" not in history.group(1):
         raise TestFailure("the status page does not list the outage")
+    # silent for at least the 60 s detection, at most until the 90 s wait ran out
+    took = re.search(r"ago for ([\d.]+) (s|min)", history.group(1))
+    seconds = float(took[1]) * (60 if took[2] == "min" else 1) if took else None
+    if seconds is None or not 60 <= seconds <= 180:
+        raise TestFailure(f"implausible outage duration: {history.group(1)}")
     b.wait(lambda: b.charging(), 180, "evcc charging again")
     # Before the board gives up (60 s) evcc gets exception 4, afterwards 11.
     b.check_log(allowed=[r"exception '4'", r"exception '11'", r"i/o timeout",
@@ -724,6 +730,53 @@ def test_busy_bridge(b):
     b.check_log()
 
 
+def test_parallel_requests(b):
+    """Parallel requests: evcc and the web page switch at once, then switch and restart at once"""
+    def web_post(path):
+        req = urllib.request.Request(b.esp + path, method="POST")
+        urllib.request.urlopen(req, timeout=5).read()
+
+    def at_once(*actions):
+        barrier = threading.Barrier(len(actions))
+        errors = []
+        def run(action):
+            barrier.wait()
+            try:
+                action()
+            except Exception as e:  # reported below
+                errors.append(e)
+        threads = [threading.Thread(target=run, args=(a,)) for a in actions]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        if errors:
+            raise TestFailure(f"request failed: {errors[0]}")
+
+    def switch_count():
+        match = re.search(r"Phase switches:? = (\d+) since power-on", b.esp_status_page())
+        return int(match[1]) if match else None
+
+    start = b.sim_state()["powered_phases"]
+    other = 3 if start == 1 else 1
+    before = switch_count()
+    at_once(lambda: b.esp_write(4, other), lambda: web_post(f"/{other}p"))
+    b.wait(lambda: b.sim_state()["powered_phases"] == other and b.esp_state() == "Running",
+           120, f"board on {other}p")
+    b.settle(10)
+    after = switch_count()
+    b.note(f"switches {before} -> {after}")
+    if after != before + 1:
+        raise TestFailure(f"expected exactly one switch, counter {before} -> {after}")
+
+    at_once(lambda: b.esp_write(4, start), lambda: web_post("/reboot"))
+    b.wait(lambda: re.search(r"Uptime:? = 00:0[0-2]:", b.esp_status_page()), 60, "ESP32 restarted")
+    b.wait_esp_running()
+    b.wait(lambda: b.sim_state()["powered_phases"] == start and b.esp_state() == "Running",
+           120, f"board back on {start}p")
+    b.check_log(allowed=ALLOWED_ON_RESTART)
+
+
 TESTS = [
     test_boot, test_pv_charging, test_auto_1p, test_auto_3p, test_manual_switch,
     test_current_after_switch, test_switch_without_evcc, test_switch_while_disabled,
@@ -731,7 +784,7 @@ TESTS = [
     test_unplug, test_unplug_during_restart, test_plug_during_switch, test_double_switch,
     test_house_spike, test_mode_off, test_evcc_restart, test_evcc_down, test_wallbox_dies,
     test_dead_wallbox, test_power_loss_charging, test_power_loss_no_car,
-    test_disable_after_switch, test_busy_bridge,
+    test_disable_after_switch, test_busy_bridge, test_parallel_requests,
 ]
 
 # tests that end in a safety fault on purpose

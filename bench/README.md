@@ -256,6 +256,7 @@ known problem.
 | 24 | Power loss without car | the same without a car: no phantom car connect in evcc |
 | 25 | Disable after a switch | evcc switches to 1p and disables charging right after it: the current stays at 0 A |
 | 26 | Busy Modbus TCP | 5 minutes of fast requests to the bridge while charging: no false evcc timeout or wallbox outage, the current never drops to 0 A |
+| 27 | Parallel requests | evcc (register 4) and the web page request the other phases at the same moment: exactly one switch; then a phase request and a reboot at the same moment: the board restarts and comes back on the requested phases |
 
 ### Known problems
 
