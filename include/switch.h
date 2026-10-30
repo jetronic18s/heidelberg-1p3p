@@ -75,8 +75,9 @@
             uint32_t _bridgeMessageCount;
             uint32_t _bridgeActiveClientCount;
             uint32_t _bridgeErrorCount;
-            uint16_t _safetyFaultCode;
-            std::string _safetyFaultText;
+            // read by the web page; the text is a string literal, set before the code
+            std::atomic<uint16_t> _safetyFaultCode;
+            std::atomic<const char*> _safetyFaultText;
             uint32_t _switchOnDeadlineMs;
             uint32_t _wallboxResponseDeadlineMs;
             uint32_t _unlockDeadlineMs;

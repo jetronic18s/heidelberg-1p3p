@@ -914,15 +914,15 @@ uint32_t PhaseSwitch::getBridgeErrorCount(){ return _bridgeErrorCount; }
 void PhaseSwitch::enterSafetyFault(uint16_t code, const char *text){
   if (_safetyFaultCode != SAFETY_FAULT_NONE) return;
 
+  _safetyFaultText = text ? text : "unspecified safety fault";
   _safetyFaultCode = code;
-  _safetyFaultText = text ? std::string(text) : std::string("unspecified safety fault");
   _delay = 0;
   _switchOnDeadlineMs = 0;
   writePin(PIN_1P_OUT, RELAY_OFF);
   writePin(PIN_3P_OUT, RELAY_OFF);
   _state = State::Fault;
 
-  ESP_LOGE(TAG, "SAFETY FAULT 0x%04X: %s", code, _safetyFaultText.c_str());
+  ESP_LOGE(TAG, "SAFETY FAULT 0x%04X: %s", code, _safetyFaultText.load());
 }
 
 bool PhaseSwitch::hasSafetyFault(){
@@ -951,7 +951,7 @@ std::string PhaseSwitch::getState(){
   }
   if (_safetyFaultCode != SAFETY_FAULT_NONE){
     char hex[16];
-    snprintf(hex, sizeof(hex), " [0x%04X]", _safetyFaultCode);
+    snprintf(hex, sizeof(hex), " [0x%04X]", _safetyFaultCode.load());
     result += hex;
   }
   if (_wallboxSilent){
@@ -970,7 +970,7 @@ std::string PhaseSwitch::getState(){
 
 uint16_t PhaseSwitch::getSafetyFaultCode(){ return _safetyFaultCode; }
 std::string PhaseSwitch::getSafetyFaultText(){
-  return (_safetyFaultCode == SAFETY_FAULT_NONE) ? "none" : _safetyFaultText;
+  return (_safetyFaultCode == SAFETY_FAULT_NONE) ? "none" : _safetyFaultText.load();
 }
 
 uint16_t PhaseSwitch::getHoldingRegister(size_t reg){
