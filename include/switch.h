@@ -72,9 +72,10 @@
             std::atomic<uint32_t> _rtuMessageCount;
             std::atomic<uint32_t> _rtuPendingRequestCount;
             std::atomic<uint32_t> _rtuErrorCount;
-            uint32_t _bridgeMessageCount;
-            uint32_t _bridgeActiveClientCount;
-            uint32_t _bridgeErrorCount;
+            // one bridge task per evcc client
+            std::atomic<uint32_t> _bridgeMessageCount;
+            std::atomic<uint32_t> _bridgeActiveClientCount;
+            std::atomic<uint32_t> _bridgeErrorCount;
             // read by the web page; the text is a string literal, set before the code
             std::atomic<uint16_t> _safetyFaultCode;
             std::atomic<const char*> _safetyFaultText;
@@ -104,9 +105,10 @@
             std::atomic<uint32_t> _wallboxOutages, _lastOutageEndMs, _lastOutageMs;
             // RTU results come from the main loop and the bridge tasks
             std::mutex _rtuStatsMutex;
-            uint32_t _evccTimeouts;
+            std::atomic<uint32_t> _evccTimeouts;
             uint16_t _hwMaxCurrent, _hwMinCurrent, _swRevision;
-            uint32_t _switchCount, _switchStartMs, _lastSwitchDoneMs, _lastSwitchMs;
+            std::atomic<uint32_t> _switchCount; // read by the web page
+            uint32_t _switchStartMs, _lastSwitchDoneMs, _lastSwitchMs;
             uint8_t _lastSwitchFrom, _lastSwitchTo;
             std::atomic<uint32_t> _lastClientAddr; // last Modbus TCP client, network order
             uint32_t _restartDeadlineMs;
