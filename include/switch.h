@@ -62,6 +62,9 @@
             // _phaseSwitchRequested and _currentWrittenDuringSwitch across the
             // main loop, the Modbus TCP bridge tasks and the web server.
             std::mutex _cacheMutex;
+            // Serializes Modbus RTU requests: esp-modbus's own semaphore gives
+            // the lock unconditionally when taking it times out.
+            std::mutex _rtuMutex;
             std::atomic<uint32_t> _switchDelay;
             bool validateSetup();
             uint8_t getActivePhases();
