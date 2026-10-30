@@ -700,7 +700,7 @@ def test_dead_wallbox(b):
 
 def test_busy_bridge(b):
     """Busy Modbus TCP: many requests while charging, no false evcc timeout"""
-    b.start_charging()
+    b.start_charging(phases=3)  # on 1p evcc would switch to 3p during the test
     before = b.esp_status_page()
     b.mark_log()
     # Register 4 is answered by the board itself, so the requests come fast and
