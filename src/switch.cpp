@@ -331,7 +331,7 @@ esp_err_t PhaseSwitch::masterReadInput(uint16_t addr, uint16_t count, uint16_t* 
     _rtuPendingRequestCount++;
     esp_err_t err;
     {
-        std::lock_guard<std::mutex> lock(_rtuMutex);
+        std::lock_guard<FifoMutex> lock(_rtuMutex);
         err = mbc_master_send_request(_master_handle, &req, dest);
     }
     _rtuPendingRequestCount--;
@@ -354,7 +354,7 @@ esp_err_t PhaseSwitch::masterReadHolding(uint16_t addr, uint16_t count, uint16_t
     _rtuPendingRequestCount++;
     esp_err_t err;
     {
-        std::lock_guard<std::mutex> lock(_rtuMutex);
+        std::lock_guard<FifoMutex> lock(_rtuMutex);
         err = mbc_master_send_request(_master_handle, &req, dest);
     }
     _rtuPendingRequestCount--;
@@ -377,7 +377,7 @@ esp_err_t PhaseSwitch::masterWriteHolding(uint16_t addr, uint16_t value) {
     _rtuPendingRequestCount++;
     esp_err_t err;
     {
-        std::lock_guard<std::mutex> lock(_rtuMutex);
+        std::lock_guard<FifoMutex> lock(_rtuMutex);
         err = mbc_master_send_request(_master_handle, &req, &value);
     }
     _rtuPendingRequestCount--;
@@ -401,7 +401,7 @@ esp_err_t PhaseSwitch::masterWriteMultipleHolding(uint16_t addr, uint16_t count,
     _rtuPendingRequestCount++;
     esp_err_t err;
     {
-        std::lock_guard<std::mutex> lock(_rtuMutex);
+        std::lock_guard<FifoMutex> lock(_rtuMutex);
         err = mbc_master_send_request(_master_handle, &req, const_cast<uint16_t*>(values));
     }
     _rtuPendingRequestCount--;

@@ -3,6 +3,7 @@
     #include <cstddef>
     #include <cstdint>
     #include <atomic>
+    #include <condition_variable>
     #include <mutex>
     #include <string>
     #include <vector>
@@ -44,6 +45,29 @@
         Restarting,
     };
 
+    // A mutex that hands the lock out in the order it was requested. A
+    // FreeRTOS mutex wakes the waiter with the highest priority, so busy
+    // Modbus TCP clients (priority 7) could keep the main loop and the web
+    // server (priority 5) away from the wallbox for seconds.
+    class FifoMutex {
+        public:
+            void lock() {
+                std::unique_lock<std::mutex> guard(_mutex);
+                uint32_t ticket = _nextTicket++;
+                _turn.wait(guard, [&] { return _serving == ticket; });
+            }
+            void unlock() {
+                std::lock_guard<std::mutex> guard(_mutex);
+                _serving++;
+                _turn.notify_all();
+            }
+        private:
+            std::mutex _mutex;
+            std::condition_variable _turn;
+            uint32_t _nextTicket = 0;
+            uint32_t _serving = 0;
+    };
+
     class PhaseSwitch{
         private:
             uint32_t _previous;
@@ -64,7 +88,7 @@
             std::mutex _cacheMutex;
             // Serializes Modbus RTU requests: esp-modbus's own semaphore gives
             // the lock unconditionally when taking it times out.
-            std::mutex _rtuMutex;
+            FifoMutex _rtuMutex;
             std::atomic<uint32_t> _switchDelay;
             bool validateSetup();
             uint8_t getActivePhases();
