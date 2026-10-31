@@ -6,6 +6,7 @@
 
 #include "esp_err.h"
 #include "esp_log.h"
+#include "lwip/inet.h"
 #include "nvs_flash.h"
 
 static constexpr const char *NVS_NAMESPACE = "hec_1p3p";
@@ -59,6 +60,16 @@ bool Config::isHostnameValid(const std::string &value)
         }
     }
     return true;
+}
+
+bool Config::isIpv4Valid(const std::string &value, bool allowEmpty)
+{
+    std::string trimmed = trimCopy(value);
+    if (trimmed.empty()) {
+        return allowEmpty;
+    }
+    ip4_addr_t parsed;
+    return ip4addr_aton(trimmed.c_str(), &parsed) != 0;
 }
 
 Config::Config()

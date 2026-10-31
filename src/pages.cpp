@@ -334,11 +334,11 @@ static void sendTableRow(std::string &response, const char *name, uint16_t value
 static void sendDebugForm(std::string &response, const std::string &slaveId, const std::string &reg, const std::string &function, const std::string &count)
 {
   response += "<form method=\"post\"><table>";
-  appendf(response, "<tr><td><label for=\"slave\">Slave ID</label></td><td><input type=\"number\" min=\"0\" max=\"247\" id=\"slave\" name=\"slave\" value=\"%s\"></td></tr>", slaveId.c_str());
-  appendf(response, "<tr><td><label for=\"func\">Function</label></td><td><select id=\"func\" name=\"func\" data-value=\"%s\">", function.c_str());
+  appendf(response, "<tr><td><label for=\"slave\">Slave ID</label></td><td><input type=\"number\" min=\"0\" max=\"247\" id=\"slave\" name=\"slave\" value=\"%s\"></td></tr>", escapeHtml(slaveId).c_str());
+  appendf(response, "<tr><td><label for=\"func\">Function</label></td><td><select id=\"func\" name=\"func\" data-value=\"%s\">", escapeHtml(function).c_str());
   response += "<option value=\"1\">01 Read Coils</option><option value=\"2\">02 Read Discrete Inputs</option><option value=\"3\">03 Read Holding Register</option><option value=\"4\">04 Read Input Register</option></select></td></tr>";
-  appendf(response, "<tr><td><label for=\"reg\">Register</label></td><td><input type=\"number\" min=\"0\" max=\"65535\" id=\"reg\" name=\"reg\" value=\"%s\"></td></tr>", reg.c_str());
-  appendf(response, "<tr><td><label for=\"count\">Count</label></td><td><input type=\"number\" min=\"0\" max=\"65535\" id=\"count\" name=\"count\" value=\"%s\"></td></tr>", count.c_str());
+  appendf(response, "<tr><td><label for=\"reg\">Register</label></td><td><input type=\"number\" min=\"0\" max=\"65535\" id=\"reg\" name=\"reg\" value=\"%s\"></td></tr>", escapeHtml(reg).c_str());
+  appendf(response, "<tr><td><label for=\"count\">Count</label></td><td><input type=\"number\" min=\"0\" max=\"65535\" id=\"count\" name=\"count\" value=\"%s\"></td></tr>", escapeHtml(count).c_str());
   response += "</table><button class=\"r\">Send</button></form><p></p>";
   response += "<script>(function(){var s=document.querySelectorAll('select[data-value]');for(var i=0;i<s.length;i++){var d=s[i];var o=d.querySelector(\"option[value='\"+d.dataset.value+\"']\");if(o){o.selected=true;}}})();</script>";
 }
@@ -526,14 +526,19 @@ static esp_err_t handleConfigGet(httpd_req_t *req)
 {
   dbgln("[webserver] GET /config");
   auto query = readQueryParams(req);
-  bool hostnameInvalid = findParam(query, "err") == "hostname";
+  const std::string err = findParam(query, "err");
+  bool hostnameInvalid = err == "hostname";
+  bool ipInvalid = err == "ip";
 
   std::string body;
   sendResponseHeader(body, "Config");
+  if (ipInvalid) {
+    body += "<p class=\"e\">Ungueltige statische IP-Konfiguration (IP, Gateway, Netmask und optional DNS muessen gueltige IPv4-Adressen sein).</p>";
+  }
   body += "<form method=\"post\"><table>";
   appendf(body, "<tr><td><label for=\"sd\">Phase switch delay (ms)</label></td><td><input type=\"number\" min=\"1\" id=\"sd\" name=\"sd\" value=\"%lu\"></td></tr>", (unsigned long)s_config->getSwitchDelay());
 
-  appendf(body, "<tr><td><label for=\"hostname\">Hostname</label></td><td><input type=\"text\" id=\"hostname\" name=\"hostname\" value=\"%s\">", s_config->getHostname().c_str());
+  appendf(body, "<tr><td><label for=\"hostname\">Hostname</label></td><td><input type=\"text\" id=\"hostname\" name=\"hostname\" value=\"%s\">", escapeHtml(s_config->getHostname()).c_str());
   if (hostnameInvalid) {
     body += "<span class=\"e\" style=\"margin-left:0.6em;\">Ungueltiger Hostname (1-32 Zeichen, A-Z, 0-9, '-'; kein '-' am Anfang/Ende)</span>";
   }
@@ -541,20 +546,20 @@ static esp_err_t handleConfigGet(httpd_req_t *req)
 
   appendf(body, "<tr><td><label>WiFi mode</label></td><td><label><input type=\"radio\" name=\"wifimode\" value=\"dhcp\" %s> DHCP</label><label><input type=\"radio\" name=\"wifimode\" value=\"static\" %s> Static</label></td></tr>",
           s_config->getWifiDhcp() ? "checked" : "", s_config->getWifiDhcp() ? "" : "checked");
-  appendf(body, "<tr class=\"wifi-static\"><td><label for=\"wifiip\">WiFi IP</label></td><td><input type=\"text\" id=\"wifiip\" name=\"wifiip\" value=\"%s\"></td></tr>", s_config->getWifiIp().c_str());
-  appendf(body, "<tr class=\"wifi-static\"><td><label for=\"wifigw\">WiFi Gateway</label></td><td><input type=\"text\" id=\"wifigw\" name=\"wifigw\" value=\"%s\"></td></tr>", s_config->getWifiGw().c_str());
-  appendf(body, "<tr class=\"wifi-static\"><td><label for=\"wifimask\">WiFi Netmask</label></td><td><input type=\"text\" id=\"wifimask\" name=\"wifimask\" value=\"%s\"></td></tr>", s_config->getWifiMask().c_str());
-  appendf(body, "<tr class=\"wifi-static\"><td><label for=\"wifidns1\">WiFi DNS 1</label></td><td><input type=\"text\" id=\"wifidns1\" name=\"wifidns1\" value=\"%s\"></td></tr>", s_config->getWifiDns1().c_str());
-  appendf(body, "<tr class=\"wifi-static\"><td><label for=\"wifidns2\">WiFi DNS 2</label></td><td><input type=\"text\" id=\"wifidns2\" name=\"wifidns2\" value=\"%s\"></td></tr>", s_config->getWifiDns2().c_str());
+  appendf(body, "<tr class=\"wifi-static\"><td><label for=\"wifiip\">WiFi IP</label></td><td><input type=\"text\" id=\"wifiip\" name=\"wifiip\" value=\"%s\"></td></tr>", escapeHtml(s_config->getWifiIp()).c_str());
+  appendf(body, "<tr class=\"wifi-static\"><td><label for=\"wifigw\">WiFi Gateway</label></td><td><input type=\"text\" id=\"wifigw\" name=\"wifigw\" value=\"%s\"></td></tr>", escapeHtml(s_config->getWifiGw()).c_str());
+  appendf(body, "<tr class=\"wifi-static\"><td><label for=\"wifimask\">WiFi Netmask</label></td><td><input type=\"text\" id=\"wifimask\" name=\"wifimask\" value=\"%s\"></td></tr>", escapeHtml(s_config->getWifiMask()).c_str());
+  appendf(body, "<tr class=\"wifi-static\"><td><label for=\"wifidns1\">WiFi DNS 1</label></td><td><input type=\"text\" id=\"wifidns1\" name=\"wifidns1\" value=\"%s\"></td></tr>", escapeHtml(s_config->getWifiDns1()).c_str());
+  appendf(body, "<tr class=\"wifi-static\"><td><label for=\"wifidns2\">WiFi DNS 2</label></td><td><input type=\"text\" id=\"wifidns2\" name=\"wifidns2\" value=\"%s\"></td></tr>", escapeHtml(s_config->getWifiDns2()).c_str());
 
 #ifdef BOARD_DINGTIAN
   appendf(body, "<tr><td><label>Ethernet mode</label></td><td><label><input type=\"radio\" name=\"ethmode\" value=\"dhcp\" %s> DHCP</label><label><input type=\"radio\" name=\"ethmode\" value=\"static\" %s> Static</label></td></tr>",
           s_config->getEthDhcp() ? "checked" : "", s_config->getEthDhcp() ? "" : "checked");
-  appendf(body, "<tr class=\"eth-static\"><td><label for=\"ethip\">Ethernet IP</label></td><td><input type=\"text\" id=\"ethip\" name=\"ethip\" value=\"%s\"></td></tr>", s_config->getEthIp().c_str());
-  appendf(body, "<tr class=\"eth-static\"><td><label for=\"ethgw\">Ethernet Gateway</label></td><td><input type=\"text\" id=\"ethgw\" name=\"ethgw\" value=\"%s\"></td></tr>", s_config->getEthGw().c_str());
-  appendf(body, "<tr class=\"eth-static\"><td><label for=\"ethmask\">Ethernet Netmask</label></td><td><input type=\"text\" id=\"ethmask\" name=\"ethmask\" value=\"%s\"></td></tr>", s_config->getEthMask().c_str());
-  appendf(body, "<tr class=\"eth-static\"><td><label for=\"ethdns1\">Ethernet DNS 1</label></td><td><input type=\"text\" id=\"ethdns1\" name=\"ethdns1\" value=\"%s\"></td></tr>", s_config->getEthDns1().c_str());
-  appendf(body, "<tr class=\"eth-static\"><td><label for=\"ethdns2\">Ethernet DNS 2</label></td><td><input type=\"text\" id=\"ethdns2\" name=\"ethdns2\" value=\"%s\"></td></tr>", s_config->getEthDns2().c_str());
+  appendf(body, "<tr class=\"eth-static\"><td><label for=\"ethip\">Ethernet IP</label></td><td><input type=\"text\" id=\"ethip\" name=\"ethip\" value=\"%s\"></td></tr>", escapeHtml(s_config->getEthIp()).c_str());
+  appendf(body, "<tr class=\"eth-static\"><td><label for=\"ethgw\">Ethernet Gateway</label></td><td><input type=\"text\" id=\"ethgw\" name=\"ethgw\" value=\"%s\"></td></tr>", escapeHtml(s_config->getEthGw()).c_str());
+  appendf(body, "<tr class=\"eth-static\"><td><label for=\"ethmask\">Ethernet Netmask</label></td><td><input type=\"text\" id=\"ethmask\" name=\"ethmask\" value=\"%s\"></td></tr>", escapeHtml(s_config->getEthMask()).c_str());
+  appendf(body, "<tr class=\"eth-static\"><td><label for=\"ethdns1\">Ethernet DNS 1</label></td><td><input type=\"text\" id=\"ethdns1\" name=\"ethdns1\" value=\"%s\"></td></tr>", escapeHtml(s_config->getEthDns1()).c_str());
+  appendf(body, "<tr class=\"eth-static\"><td><label for=\"ethdns2\">Ethernet DNS 2</label></td><td><input type=\"text\" id=\"ethdns2\" name=\"ethdns2\" value=\"%s\"></td></tr>", escapeHtml(s_config->getEthDns2()).c_str());
 #endif
 
   body += "</table><p></p>";
@@ -605,8 +610,33 @@ static esp_err_t handleConfigPost(httpd_req_t *req)
     }
   }
 
+  const bool wifiDhcp = hasParam(params, "wifimode") ? (findParam(params, "wifimode") == "dhcp") : s_config->getWifiDhcp();
+  if (!wifiDhcp) {
+    if (!Config::isIpv4Valid(findParam(params, "wifiip", s_config->getWifiIp()))
+        || !Config::isIpv4Valid(findParam(params, "wifigw", s_config->getWifiGw()))
+        || !Config::isIpv4Valid(findParam(params, "wifimask", s_config->getWifiMask()))
+        || !Config::isIpv4Valid(findParam(params, "wifidns1", s_config->getWifiDns1()), true)
+        || !Config::isIpv4Valid(findParam(params, "wifidns2", s_config->getWifiDns2()), true)) {
+      redirect(req, "/config?err=ip");
+      return ESP_OK;
+    }
+  }
+#ifdef BOARD_DINGTIAN
+  const bool ethDhcp = hasParam(params, "ethmode") ? (findParam(params, "ethmode") == "dhcp") : s_config->getEthDhcp();
+  if (!ethDhcp) {
+    if (!Config::isIpv4Valid(findParam(params, "ethip", s_config->getEthIp()))
+        || !Config::isIpv4Valid(findParam(params, "ethgw", s_config->getEthGw()))
+        || !Config::isIpv4Valid(findParam(params, "ethmask", s_config->getEthMask()))
+        || !Config::isIpv4Valid(findParam(params, "ethdns1", s_config->getEthDns1()), true)
+        || !Config::isIpv4Valid(findParam(params, "ethdns2", s_config->getEthDns2()), true)) {
+      redirect(req, "/config?err=ip");
+      return ESP_OK;
+    }
+  }
+#endif
+
   if (hasParam(params, "wifimode")) {
-    s_config->setWifiDhcp(findParam(params, "wifimode") == "dhcp");
+    s_config->setWifiDhcp(wifiDhcp);
   }
   if (hasParam(params, "wifiip")) s_config->setWifiIp(std::string(findParam(params, "wifiip").c_str()));
   if (hasParam(params, "wifigw")) s_config->setWifiGw(std::string(findParam(params, "wifigw").c_str()));
@@ -616,7 +646,7 @@ static esp_err_t handleConfigPost(httpd_req_t *req)
 
 #ifdef BOARD_DINGTIAN
   if (hasParam(params, "ethmode")) {
-    s_config->setEthDhcp(findParam(params, "ethmode") == "dhcp");
+    s_config->setEthDhcp(ethDhcp);
   }
   if (hasParam(params, "ethip")) s_config->setEthIp(std::string(findParam(params, "ethip").c_str()));
   if (hasParam(params, "ethgw")) s_config->setEthGw(std::string(findParam(params, "ethgw").c_str()));
