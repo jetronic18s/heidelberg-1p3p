@@ -55,8 +55,9 @@ static constexpr uint32_t WALLBOX_SILENT_TIMEOUT_MS = 60000;
 static constexpr uint16_t MODBUS_TCP_PORT = 502;
 static constexpr uint16_t MODBUS_TCP_MAX_PDU = 253;
 static constexpr uint32_t MODBUS_TCP_CLIENT_TIMEOUT_SEC = 5;
-// each client gets a task with 6 KB stack
-static constexpr uint32_t MAX_MODBUS_TCP_CLIENTS = 10;
+// each client gets a task with 6 KB stack; evcc, one more client and a spare
+// for evcc reconnecting before its old connection times out
+static constexpr uint32_t MAX_MODBUS_TCP_CLIENTS = 3;
 static constexpr uint8_t FC_READ_HOLDING = 3;
 static constexpr uint8_t FC_READ_INPUT = 4;
 static constexpr uint8_t FC_WRITE_HOLDING = 6;

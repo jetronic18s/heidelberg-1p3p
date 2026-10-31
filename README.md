@@ -96,6 +96,8 @@ Nach erfolgreichem Speichern der WLAN‑Daten führt das Gerät einen automatisc
 
 Unter **Config** kann Modbus komplett deaktiviert werden. In diesem Fall wird im Status keine Register‑Aktualisierung angeboten.
 
+Über Modbus TCP (Port 502) sind höchstens 3 Verbindungen gleichzeitig möglich: evcc, ein weiterer Client und eine Reserve, damit evcc sich nach einem Netzwerkaussetzer sofort wieder verbinden kann. Weitere Verbindungen werden abgewiesen.
+
 ### Telnet-Debug (bei aktivem Modbus)
 
 Wenn Modbus/RS485 aktiv ist, kann unter **Config** zusätzlich **Telnet-Debug aktiv (Port 23)** eingeschaltet werden.
