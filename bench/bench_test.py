@@ -826,6 +826,9 @@ def test_concurrent_rtu_and_status(b):
 
     def modbus_worker(worker_id):
         tid = worker_id * 1000
+        step = "connect"
+        started = time.monotonic()
+        requests = 0
         try:
             with socket.create_connection((b.esp_ip, 502), timeout=5) as conn:
                 conn.settimeout(5)
@@ -833,22 +836,33 @@ def test_concurrent_rtu_and_status(b):
                     tid = (tid + 1) & 0xFFFF
                     # Alternate between input reg 5 (RTU), holding reg 261 (RTU) and reg 4 (virtual)
                     for fc, reg, cnt in ((4, 5, 4), (3, 261, 1), (3, 4, 1)):
+                        step = f"read fc {fc} reg {reg}"
+                        started = time.monotonic()
                         conn.sendall(struct.pack(">HHHBBHH", tid, 0, 6, 1, fc, reg, cnt))
                         reply = conn.recv(256)
+                        requests += 1
                         if len(reply) < 9 or reply[7] & 0x80:
                             raise TestFailure(f"worker {worker_id} read ({fc},{reg}) failed: {reply.hex()}")
         except Exception as e:
-            errors.append(e)
+            errors.append(f"modbus worker {worker_id}, {step}, after {requests} requests, "
+                          f"{time.strftime('%H:%M:%S')}, waited {time.monotonic() - started:.1f} s: {e}")
 
     def status_worker():
+        step = "POST /status"
+        started = time.monotonic()
         try:
             while time.monotonic() < stop_time:
+                step = "POST /status"
+                started = time.monotonic()
                 req = urllib.request.Request(b.esp + "/status", method="POST")
                 urllib.request.urlopen(req, timeout=5).read()
+                step = "GET status page"
+                started = time.monotonic()
                 if "Memory" not in b.esp_status_page():
                     raise TestFailure("incomplete /status page during concurrent access")
         except Exception as e:
-            errors.append(e)
+            errors.append(f"status worker, {step}, {time.strftime('%H:%M:%S')}, "
+                          f"waited {time.monotonic() - started:.1f} s: {e}")
 
     threads = [threading.Thread(target=modbus_worker, args=(i,)) for i in range(3)]
     threads.append(threading.Thread(target=status_worker))
@@ -857,6 +871,8 @@ def test_concurrent_rtu_and_status(b):
     for t in threads:
         t.join()
     if errors:
+        for error in errors:
+            b.note(error)
         raise TestFailure(f"concurrent worker failed: {errors[0]}")
 
     # The client cap (MAX_MODBUS_TCP_CLIENTS = 10) includes evcc's own connection.
