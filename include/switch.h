@@ -86,6 +86,7 @@
             // read by the web page; the text is a string literal, set before the code
             std::atomic<uint16_t> _safetyFaultCode;
             std::atomic<const char*> _safetyFaultText;
+            uint32_t _switchOffDeadlineMs;
             uint32_t _switchOnDeadlineMs;
             uint32_t _wallboxResponseDeadlineMs;
             uint32_t _zeroLoadDeadlineMs;

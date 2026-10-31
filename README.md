@@ -126,6 +126,7 @@ Erkennt der ESP einen Sicherheitsfehler, schaltet er beide Schütze ab und geht 
 | `0xE102` | Nach dem Umschalten kam die Bestätigung nicht rechtzeitig (Rückmelde-Eingang und/oder Phasenspannungen). | Schaltet das Schütz? Rückmelde-Eingänge, Phasenerkennung |
 | `0xE103` | Ungültige Rückmeldung im Betrieb (`Running`): kein oder widersprüchliches Rückmeldesignal. | Hilfsschalter-Verdrahtung, stabile Eingänge |
 | `0xE104` | Die Wallbox antwortet nach dem Einschalten 60 s lang nicht auf Modbus (z.B. nach einem Neustart). | RS485-Verdrahtung, startet die Wallbox überhaupt? Ein Neustart des ESP schaltet die Wallbox erneut aus und ein. |
+| `0xE105` | Beide Schütze sind abgeschaltet, aber ein Rückmelde-Eingang ist nach 8 s noch aktiv (beim Umschalten oder beim Start des ESP). | Klebt ein Schütz? Hilfsschalter-Verdrahtung |
 
 ## Darf ich das?
 

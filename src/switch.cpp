@@ -42,6 +42,7 @@ static constexpr uint16_t SAFETY_FAULT_FEEDBACK_BOTH_ACTIVE = 0xE101;
 static constexpr uint16_t SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT = 0xE102;
 static constexpr uint16_t SAFETY_FAULT_RUNNING_FEEDBACK_INVALID = 0xE103;
 static constexpr uint16_t SAFETY_FAULT_WALLBOX_NOT_RESPONDING = 0xE104;
+static constexpr uint16_t SAFETY_FAULT_SWITCH_OFF_TIMEOUT = 0xE105;
 static constexpr uint32_t SWITCH_CONFIRM_TIMEOUT_MS = 8000;
 static constexpr uint32_t SWITCH_POWER_ON_SETTLE_MS = 7000;
 // The Heidelberg answers about 20 s after power-on.
@@ -148,6 +149,7 @@ PhaseSwitch::PhaseSwitch()
   ,_bridgeErrorCount(0)
   ,_safetyFaultCode(SAFETY_FAULT_NONE)
   ,_safetyFaultText("")
+  ,_switchOffDeadlineMs(0)
   ,_switchOnDeadlineMs(0)
   ,_wallboxResponseDeadlineMs(0)
   ,_zeroLoadDeadlineMs(0)
@@ -444,9 +446,18 @@ void PhaseSwitch::loop(){
     if (readPin(PIN_1P_IN) == 0 && readPin(PIN_3P_IN) == 0){
       ESP_LOGI(TAG, "confirmed off");
       _switchingSupported = true;
+      _switchOffDeadlineMs = 0;
       _state = State::ConfirmedOff;
       _previous = nowMs();
       _delay = 2000;
+      return;
+    }
+    // A stuck contactor: both relays are off, but its feedback stays on.
+    // Also at boot, where the board starts in this state.
+    if (_switchOffDeadlineMs == 0) {
+      _switchOffDeadlineMs = nowMs() + SWITCH_CONFIRM_TIMEOUT_MS;
+    } else if (pastDeadline(_switchOffDeadlineMs)) {
+      enterSafetyFault(SAFETY_FAULT_SWITCH_OFF_TIMEOUT, "contactor feedback still on after switching off");
     }
     return;
   }
@@ -547,6 +558,7 @@ void PhaseSwitch::loop(){
   else if (_state == State::ConfirmedZero){
     writePin(PIN_1P_OUT, RELAY_OFF);
     writePin(PIN_3P_OUT, RELAY_OFF);
+    _switchOffDeadlineMs = nowMs() + SWITCH_CONFIRM_TIMEOUT_MS;
     _state = State::WaitingForOff;
     ESP_LOGI(TAG, "switched off");
     return;
