@@ -774,7 +774,8 @@ def test_parallel_requests(b):
     b.wait_esp_running()
     b.wait(lambda: b.sim_state()["powered_phases"] == start and b.esp_state() == "Running",
            120, f"board back on {start}p")
-    b.check_log(allowed=ALLOWED_ON_RESTART)
+    # the test switches past evcc, so evcc warns once when its phases differ
+    b.check_log(allowed=ALLOWED_ON_RESTART + [r"phases mismatch"])
 
 
 def test_write_multiple_phases(b):
