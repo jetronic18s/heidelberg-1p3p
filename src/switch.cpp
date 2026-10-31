@@ -31,6 +31,12 @@ static uint32_t msSince(const std::atomic<uint32_t>& stamp)
   return nowMs() - then;
 }
 
+// Deadlines are uint32_t milliseconds and wrap after 49.7 days.
+static bool pastDeadline(uint32_t deadlineMs)
+{
+  return (int32_t)(nowMs() - deadlineMs) > 0;
+}
+
 static constexpr uint16_t SAFETY_FAULT_NONE = 0x0000;
 static constexpr uint16_t SAFETY_FAULT_FEEDBACK_BOTH_ACTIVE = 0xE101;
 static constexpr uint16_t SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT = 0xE102;
@@ -464,7 +470,7 @@ void PhaseSwitch::loop(){
     // The switch-on confirmation below needs a responding wallbox. Without
     // this check a wallbox that never answers after power-on keeps us waiting
     // forever with the contactor closed.
-    if (_state == State::SwitchedOn && nowMs() > _wallboxResponseDeadlineMs) {
+    if (_state == State::SwitchedOn && pastDeadline(_wallboxResponseDeadlineMs)) {
       enterSafetyFault(SAFETY_FAULT_WALLBOX_NOT_RESPONDING, "wallbox not responding after power-on");
       return;
     }
@@ -537,14 +543,14 @@ void PhaseSwitch::loop(){
   else if (_state == State::SwitchedOn){
     if (_desiredPhases == 3){
       if (readPin(PIN_3P_IN) != 1) {
-        if (nowMs() > _switchOnDeadlineMs) {
+        if (pastDeadline(_switchOnDeadlineMs)) {
           enterSafetyFault(SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT, "timeout waiting for 3P feedback input");
           return;
         }
         return;
       }
       if (getActivePhases() != 3) {
-        if (nowMs() > _switchOnDeadlineMs) {
+        if (pastDeadline(_switchOnDeadlineMs)) {
           enterSafetyFault(SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT, "timeout waiting for 3P confirmation");
           return;
         }
@@ -556,14 +562,14 @@ void PhaseSwitch::loop(){
     }
     else {
       if (readPin(PIN_1P_IN) != 1) {
-        if (nowMs() > _switchOnDeadlineMs) {
+        if (pastDeadline(_switchOnDeadlineMs)) {
           enterSafetyFault(SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT, "timeout waiting for 1P feedback input");
           return;
         }
         return;
       }
       if (getActivePhases() != 1) {
-        if (nowMs() > _switchOnDeadlineMs) {
+        if (pastDeadline(_switchOnDeadlineMs)) {
           enterSafetyFault(SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT, "timeout waiting for 1P confirmation");
           return;
         }
@@ -623,7 +629,7 @@ void PhaseSwitch::loop(){
       _state = State::Running;
       return;
     }
-    if (nowMs() > _unlockDeadlineMs) {
+    if (pastDeadline(_unlockDeadlineMs)) {
       ESP_LOGW(TAG, "timeout waiting for unlock, writing it again");
       masterWriteHolding(HEC_REG_REMOTE_LOCK, 1);
       _lastWallboxOkMs = nowMs();
@@ -680,7 +686,7 @@ void PhaseSwitch::handleRestart(){
     ESP_LOGI(TAG, "lock and zero current confirmed, restarting");
     restartNow();
   }
-  if ((int32_t)(nowMs() - _restartDeadlineMs) > 0) {
+  if (pastDeadline(_restartDeadlineMs)) {
     ESP_LOGW(TAG, "timeout waiting for lock and zero current, restarting");
     restartNow();
   }

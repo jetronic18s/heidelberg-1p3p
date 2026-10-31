@@ -281,7 +281,7 @@ static void main_task(void *pvParameters)
                 phaseSwitch.loop();
                 continue;
             }
-            if (wifi_reenable_after != 0 && nowMs() < wifi_reenable_after) {
+            if (wifi_reenable_after != 0 && (int32_t)(nowMs() - wifi_reenable_after) < 0) {
                 sleepMs(10);
                 phaseSwitch.loop();
                 continue;
