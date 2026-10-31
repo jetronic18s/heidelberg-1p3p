@@ -1475,6 +1475,21 @@ bool PhaseSwitch::handleWriteHolding(uint8_t, uint16_t addr, uint16_t value, std
 
 bool PhaseSwitch::handleWriteMultiple(uint8_t, uint16_t addr, uint16_t count, const uint16_t* values, std::vector<uint8_t>& responsePdu)
 {
+  // Register 4 (phases) like in handleWriteHolding; never part of a range.
+  if (_switchingSupported && addr <= 4 && 4 < addr + count) {
+    if (addr == 4 && count == 1 && (values[0] == 1 || values[0] == 3)) {
+      requestPhases((uint8_t)values[0]);
+      responsePdu = {FC_WRITE_MULTIPLE};
+      appendU16be(responsePdu, addr);
+      appendU16be(responsePdu, count);
+      return true;
+    }
+    buildException(FC_WRITE_MULTIPLE,
+                   (addr == 4 && count == 1) ? EX_ILLEGAL_DATA_VALUE : EX_ILLEGAL_DATA_ADDRESS,
+                   responsePdu);
+    return true;
+  }
+
   if (waitingForWallbox()) {
     buildException(FC_WRITE_MULTIPLE, EX_GATEWAY_TARGET_FAILED, responsePdu);
     return true;
