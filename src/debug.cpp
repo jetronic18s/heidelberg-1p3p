@@ -1,9 +1,11 @@
 #include "debug.h"
 
+#include <atomic>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <cstdarg>
+#include <mutex>
 
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -16,8 +18,10 @@
 
 namespace {
 
+// recursive: a log line written while the lock is held must not block
+static std::recursive_mutex s_telnet_mutex;
 static bool s_telnet_enabled = false;
-static bool s_console_log_disabled = false;
+static std::atomic<bool> s_console_log_disabled{false};
 static int s_listen_fd = -1;
 static int s_client_fd = -1;
 
@@ -145,6 +149,7 @@ static void writeBytes(const char *data, size_t len)
         fflush(stdout);
     }
 
+    std::lock_guard<std::recursive_mutex> lock(s_telnet_mutex);
     if (!s_telnet_enabled || s_client_fd < 0) {
         return;
     }
@@ -175,6 +180,7 @@ void debugInit()
 
 void debugLoop()
 {
+    std::lock_guard<std::recursive_mutex> lock(s_telnet_mutex);
     if (!s_telnet_enabled) {
         if (s_listen_fd >= 0 || s_client_fd >= 0) {
             closeTelnet();
@@ -192,6 +198,7 @@ void debugLoop()
 
 void debugSetTelnetEnabled(bool enabled)
 {
+    std::lock_guard<std::recursive_mutex> lock(s_telnet_mutex);
     s_telnet_enabled = enabled;
     if (!s_telnet_enabled) {
         closeTelnet();
