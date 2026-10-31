@@ -9,7 +9,6 @@
     #include "debug.h"
 
     void setupPages(PhaseSwitch *phaseSwitch, Config *config);
-    std::string ErrorName(uint8_t code);
     std::string WiFiQuality(int rssiValue);
     std::string ChargingState(uint16_t state);
     std::string Uptime();

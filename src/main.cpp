@@ -197,9 +197,11 @@ static void main_task(void *pvParameters)
     esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifiEventHandler, nullptr);
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifiEventHandler, nullptr);
 
+#ifdef PIN_FACTORY_LED
     gpio_reset_pin((gpio_num_t)PIN_FACTORY_LED);
     gpio_set_direction((gpio_num_t)PIN_FACTORY_LED, GPIO_MODE_OUTPUT);
     gpio_set_level((gpio_num_t)PIN_FACTORY_LED, 0);
+#endif
 
 #ifdef BOARD_DINGTIAN
     if (!eth_ok) {
@@ -248,8 +250,9 @@ static void main_task(void *pvParameters)
             s_sta_connected_or_got_ip = false;
         }
 
-#ifdef BOARD_DINGTIAN
         debugLoop();
+
+#ifdef BOARD_DINGTIAN
         static bool wifi_disabled_by_eth = false;
         static bool wifi_state_initialized = false;
         static uint32_t eth_inactive_since = 0;

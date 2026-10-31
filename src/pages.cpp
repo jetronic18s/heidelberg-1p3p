@@ -1054,23 +1054,6 @@ void setupPages(PhaseSwitch *phaseSwitch, Config *config)
   httpd_register_err_handler(s_server, HTTPD_404_NOT_FOUND, handle404);
 }
 
-std::string ErrorName(uint8_t code)
-{
-  switch (code)
-  {
-      case 0x00: return "Success";
-      case 0x01: return "Illegal function";
-      case 0x02: return "Illegal data address";
-      case 0x03: return "Illegal data value";
-      case 0x04: return "Server device failure";
-      case 0x05: return "Acknowledge";
-      case 0x06: return "Server device busy";
-      case 0x07: return "Negative acknowledge";
-      case 0x08: return "Memory parity error";
-      default: return "undefined error";
-  }
-}
-
 std::string WiFiQuality(int rssiValue)
 {
   switch (rssiValue)

@@ -3,11 +3,6 @@
 
 namespace uptime {
 
-static uint32_t s_seconds = 0;
-static uint32_t s_minutes = 0;
-static uint32_t s_hours = 0;
-static uint32_t s_days = 0;
-
 void calculateUptime() {
     // Nothing to do here if we calculate on demand, 
     // but we'll keep it for compatibility with the header
