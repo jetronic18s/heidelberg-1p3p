@@ -88,6 +88,7 @@
             std::atomic<const char*> _safetyFaultText;
             uint32_t _switchOnDeadlineMs;
             uint32_t _wallboxResponseDeadlineMs;
+            uint32_t _zeroLoadDeadlineMs;
             uint32_t _unlockDeadlineMs;
             std::atomic<bool> _restartRequested;
             std::atomic<bool> _updateInProgress;

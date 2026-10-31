@@ -46,6 +46,7 @@ static constexpr uint32_t SWITCH_CONFIRM_TIMEOUT_MS = 8000;
 static constexpr uint32_t SWITCH_POWER_ON_SETTLE_MS = 7000;
 // The Heidelberg answers about 20 s after power-on.
 static constexpr uint32_t WALLBOX_RESPONSE_TIMEOUT_MS = 60000;
+static constexpr uint32_t ZERO_LOAD_TIMEOUT_MS = 15000;
 static constexpr uint32_t RESTART_STOP_TIMEOUT_MS = 10000;
 static constexpr uint32_t UNLOCK_CONFIRM_TIMEOUT_MS = 15000;
 // A wallbox silent this long in Running is reported as not responding.
@@ -149,6 +150,7 @@ PhaseSwitch::PhaseSwitch()
   ,_safetyFaultText("")
   ,_switchOnDeadlineMs(0)
   ,_wallboxResponseDeadlineMs(0)
+  ,_zeroLoadDeadlineMs(0)
   ,_unlockDeadlineMs(0)
   ,_restartRequested(false)
   ,_updateInProgress(false)
@@ -510,27 +512,36 @@ void PhaseSwitch::loop(){
     return;
   }
   else if (_state == State::SwitchPhases){
-    if (masterWriteHolding(HEC_REG_MAX_CURRENT, 0) != ESP_OK) return;
-    if (masterWriteHolding(HEC_REG_REMOTE_LOCK, 0) != ESP_OK) return;
-    
+    if (masterWriteHolding(HEC_REG_MAX_CURRENT, 0) != ESP_OK
+        || masterWriteHolding(HEC_REG_REMOTE_LOCK, 0) != ESP_OK) {
+      _previous = nowMs();
+      _delay = 500;
+      return;
+    }
+
     ESP_LOGI(TAG, "phase switch started");
+    _zeroLoadDeadlineMs = nowMs() + ZERO_LOAD_TIMEOUT_MS;
     _state = State::WaitingForZero;
     return;
   }
   else if (_state == State::WaitingForZero){
-    uint16_t data[4]; 
-    if (masterReadInput(5, 4, data) != ESP_OK) return;
-    
-    uint16_t state = data[0];
-    uint16_t l1 = data[1];
-    uint16_t l2 = data[2];
-    uint16_t l3 = data[3];
-    
-    if (state != 10) return;
-    if (l1 > 0 || l2 > 0 || l3 > 0) return;
-    
-    ESP_LOGI(TAG, "zero load confirmed");
-    _state = State::ConfirmedZero;
+    uint16_t data[4];
+    const bool stopped = masterReadInput(5, 4, data) == ESP_OK
+      && data[0] == 10 && data[1] == 0 && data[2] == 0 && data[3] == 0;
+    if (stopped) {
+      ESP_LOGI(TAG, "zero load confirmed");
+      _state = State::ConfirmedZero;
+      return;
+    }
+    if (pastDeadline(_zeroLoadDeadlineMs)) {
+      ESP_LOGW(TAG, "timeout waiting for lock and zero current, writing them again");
+      masterWriteHolding(HEC_REG_MAX_CURRENT, 0);
+      masterWriteHolding(HEC_REG_REMOTE_LOCK, 0);
+      _zeroLoadDeadlineMs = nowMs() + ZERO_LOAD_TIMEOUT_MS;
+    }
+    // poll the wallbox every 500 ms, not every pass
+    _previous = nowMs();
+    _delay = 500;
     return;
   }
   else if (_state == State::ConfirmedZero){
