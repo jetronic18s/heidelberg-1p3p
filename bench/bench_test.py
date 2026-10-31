@@ -777,6 +777,128 @@ def test_parallel_requests(b):
     b.check_log(allowed=ALLOWED_ON_RESTART)
 
 
+def test_write_multiple_phases(b):
+    """Write Multiple Registers on register 4: invalid values rejected, valid ones switch"""
+    def write_multiple(addr, values):
+        payload = b"".join(struct.pack(">H", v) for v in values)
+        pdu = struct.pack(">BHHB", 16, addr, len(values), len(payload)) + payload
+        frame = struct.pack(">HHHB", 1, 0, len(pdu) + 1, 1) + pdu
+        with socket.create_connection((b.esp_ip, 502), timeout=5) as conn:
+            conn.sendall(frame)
+            return conn.recv(256)
+
+    # Invalid value 2 on register 4 must return exception 3 (Illegal Data Value)
+    reply = write_multiple(4, [2])
+    if len(reply) < 9 or reply[7] != (16 | 0x80) or reply[8] != 3:
+        raise TestFailure(f"expected exception 3 for value 2, got {reply.hex()}")
+
+    # Overlapping range across register 4 must return exception 2 (Illegal Data Address)
+    reply = write_multiple(4, [1, 0])
+    if len(reply) < 9 or reply[7] != (16 | 0x80) or reply[8] != 2:
+        raise TestFailure(f"expected exception 2 for a range across register 4, got {reply.hex()}")
+
+    # a valid value switches the phases
+    start = b.sim_state()["powered_phases"]
+    other = 3 if start == 1 else 1
+    reply = write_multiple(4, [other])
+    if len(reply) < 12 or reply[7] & 0x80:
+        raise TestFailure(f"write to register 4 failed: {reply.hex()}")
+    b.wait(lambda: b.sim_state()["powered_phases"] == other and b.esp_state() == "Running",
+           120, f"board on {other}p after the write")
+
+    reply = write_multiple(4, [start])
+    if len(reply) < 12 or reply[7] & 0x80:
+        raise TestFailure(f"write back to {start}p failed: {reply.hex()}")
+    b.wait(lambda: b.sim_state()["powered_phases"] == start and b.esp_state() == "Running",
+           120, f"board back on {start}p")
+    b.check_log(allowed=[r"phases mismatch"])
+
+
+def test_concurrent_rtu_and_status(b):
+    """Concurrent RTU & web status: parallel Modbus TCP, POST /status and connection cap"""
+    b.start_charging(phases=3)
+    before = b.esp_status_page()
+    b.mark_log()
+
+    stop_time = time.monotonic() + 30
+    errors = []
+
+    def modbus_worker(worker_id):
+        tid = worker_id * 1000
+        try:
+            with socket.create_connection((b.esp_ip, 502), timeout=5) as conn:
+                conn.settimeout(5)
+                while time.monotonic() < stop_time:
+                    tid = (tid + 1) & 0xFFFF
+                    # Alternate between input reg 5 (RTU), holding reg 261 (RTU) and reg 4 (virtual)
+                    for fc, reg, cnt in ((4, 5, 4), (3, 261, 1), (3, 4, 1)):
+                        conn.sendall(struct.pack(">HHHBBHH", tid, 0, 6, 1, fc, reg, cnt))
+                        reply = conn.recv(256)
+                        if len(reply) < 9 or reply[7] & 0x80:
+                            raise TestFailure(f"worker {worker_id} read ({fc},{reg}) failed: {reply.hex()}")
+        except Exception as e:
+            errors.append(e)
+
+    def status_worker():
+        try:
+            while time.monotonic() < stop_time:
+                req = urllib.request.Request(b.esp + "/status", method="POST")
+                urllib.request.urlopen(req, timeout=5).read()
+                if "Memory" not in b.esp_status_page():
+                    raise TestFailure("incomplete /status page during concurrent access")
+        except Exception as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=modbus_worker, args=(i,)) for i in range(3)]
+    threads.append(threading.Thread(target=status_worker))
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    if errors:
+        raise TestFailure(f"concurrent worker failed: {errors[0]}")
+
+    # The client cap (MAX_MODBUS_TCP_CLIENTS = 10) includes evcc's own connection.
+    time.sleep(2)  # the worker connections are closed, their tasks end
+    conns = []
+    try:
+        for _ in range(12):
+            try:
+                s = socket.create_connection((b.esp_ip, 502), timeout=2)
+                s.settimeout(1)
+                conns.append(s)
+            except OSError:
+                pass
+        # At least one of the 12 connections must be closed by the cap when reading
+        alive = 0
+        for s in conns:
+            try:
+                s.sendall(struct.pack(">HHHBBHH", 1, 0, 6, 1, 3, 4, 1))
+                if len(s.recv(256)) >= 9:
+                    alive += 1
+            except OSError:
+                pass
+        b.note(f"connection cap check: {alive}/12 sockets answered")
+        if not 1 <= alive <= 9:
+            raise TestFailure(f"expected 1..9 answering sockets besides evcc, got {alive}")
+    finally:
+        for s in conns:
+            s.close()
+
+    b.settle(20)  # evcc keeps polling over its own connection
+    after = b.esp_status_page()
+    count = lambda page, pattern: int((re.search(pattern, page) or [0, 0])[1])
+    if count(after, r"(\d+)x not responding") != count(before, r"(\d+)x not responding"):
+        raise TestFailure("false wallbox outage during concurrent access")
+    if count(after, r"(\d+) timeouts since power-on") != count(before, r"(\d+) timeouts since power-on"):
+        raise TestFailure("false evcc timeout during concurrent access")
+    if any("max current 0.0" in line for line in b.sim_log_since_mark()):
+        raise TestFailure("the current dropped to 0 A during concurrent access")
+    if not b.charging(3):
+        raise TestFailure("charging stopped during concurrent access")
+    b.check_log()
+
+
 TESTS = [
     test_boot, test_pv_charging, test_auto_1p, test_auto_3p, test_manual_switch,
     test_current_after_switch, test_switch_without_evcc, test_switch_while_disabled,
@@ -785,6 +907,7 @@ TESTS = [
     test_house_spike, test_mode_off, test_evcc_restart, test_evcc_down, test_wallbox_dies,
     test_dead_wallbox, test_power_loss_charging, test_power_loss_no_car,
     test_disable_after_switch, test_busy_bridge, test_parallel_requests,
+    test_write_multiple_phases, test_concurrent_rtu_and_status,
 ]
 
 # tests that end in a safety fault on purpose
