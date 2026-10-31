@@ -864,7 +864,8 @@ def test_concurrent_rtu_and_status(b):
             errors.append(f"status worker, {step}, {time.strftime('%H:%M:%S')}, "
                           f"waited {time.monotonic() - started:.1f} s: {e}")
 
-    threads = [threading.Thread(target=modbus_worker, args=(i,)) for i in range(3)]
+    # the cap leaves two connections besides evcc's
+    threads = [threading.Thread(target=modbus_worker, args=(i,)) for i in range(2)]
     threads.append(threading.Thread(target=status_worker))
     for t in threads:
         t.start()
@@ -875,18 +876,17 @@ def test_concurrent_rtu_and_status(b):
             b.note(error)
         raise TestFailure(f"concurrent worker failed: {errors[0]}")
 
-    # The client cap (MAX_MODBUS_TCP_CLIENTS = 10) includes evcc's own connection.
+    # The client cap (MAX_MODBUS_TCP_CLIENTS = 3) includes evcc's own connection.
     time.sleep(2)  # the worker connections are closed, their tasks end
     conns = []
     try:
-        for _ in range(12):
+        for _ in range(5):
             try:
                 s = socket.create_connection((b.esp_ip, 502), timeout=2)
                 s.settimeout(1)
                 conns.append(s)
             except OSError:
                 pass
-        # At least one of the 12 connections must be closed by the cap when reading
         alive = 0
         for s in conns:
             try:
@@ -895,9 +895,12 @@ def test_concurrent_rtu_and_status(b):
                     alive += 1
             except OSError:
                 pass
-        b.note(f"connection cap check: {alive}/12 sockets answered")
-        if not 1 <= alive <= 9:
-            raise TestFailure(f"expected 1..9 answering sockets besides evcc, got {alive}")
+        b.note(f"connection cap check: {alive}/5 sockets answered")
+        if alive != 2:
+            raise TestFailure(f"expected 2 answering sockets besides evcc, got {alive}")
+        # the cap keeps sockets free for the web server
+        if "Memory" not in b.esp_status_page():
+            raise TestFailure("status page not reachable while the Modbus clients are at the cap")
     finally:
         for s in conns:
             s.close()

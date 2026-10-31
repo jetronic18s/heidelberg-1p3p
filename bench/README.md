@@ -258,7 +258,7 @@ known problem.
 | 26 | Busy Modbus TCP | 5 minutes of fast requests to the bridge while charging: no false evcc timeout or wallbox outage, the current never drops to 0 A |
 | 27 | Parallel requests | evcc (register 4) and the web page request the other phases at the same moment: exactly one switch; then a phase request and a reboot at the same moment: the board restarts and comes back on the requested phases |
 | 28 | Write Multiple Registers | register 4 written with Write Multiple Registers instead of Write Single Register: an invalid value returns exception 3, a range across register 4 exception 2, a valid value switches the phases |
-| 29 | Concurrent RTU & web status | three Modbus TCP clients reading wallbox registers and `POST /status` for 30 s while charging, then 12 connections against the cap of 10 (evcc holds one): at most 9 answer; no false outage or evcc timeout, the current never drops to 0 A |
+| 29 | Concurrent RTU & web status | two Modbus TCP clients reading wallbox registers and `POST /status` for 30 s while charging, then 5 connections against the cap of 3 (evcc holds one): exactly 2 answer and the status page stays reachable; no false outage or evcc timeout, the current never drops to 0 A |
 
 ### Known problems
 
