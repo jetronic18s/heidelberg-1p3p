@@ -50,6 +50,7 @@
             bool _modbusEnabled;
             bool _telnetEnabled;
             std::string _hostname;
+            std::string _ntpServer;
             bool readBool(const char *key, bool defaultValue);
             bool tryReadBool(const char *key, bool *outValue);
             uint32_t readUInt32(const char *key, uint32_t defaultValue);
@@ -96,7 +97,10 @@
             void setTelnetEnabled(bool value);
             std::string getHostname();
             void setHostname(const std::string &value);
+            std::string getNtpServer();
+            void setNtpServer(const std::string &value);
             static bool isHostnameValid(const std::string &value);
+            static bool isNtpServerValid(const std::string &value);
             static bool isIpv4Valid(const std::string &value, bool allowEmpty = false);
     };
 

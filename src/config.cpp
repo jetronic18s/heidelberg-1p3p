@@ -9,6 +9,8 @@
 #include "lwip/inet.h"
 #include "nvs_flash.h"
 
+static const char *DEFAULT_NTP_SERVER = "pool.ntp.org";
+
 static constexpr const char *NVS_NAMESPACE = "hec_1p3p";
 
 static constexpr const char *KEY_WIFI_RESET_PENDING = "wifiRstPend";
@@ -93,6 +95,7 @@ Config::Config()
     ,_modbusEnabled(true)
     ,_telnetEnabled(false)
     ,_hostname("heidelberg-1p3p")
+    ,_ntpServer(DEFAULT_NTP_SERVER)
 {}
 
 void Config::begin()
@@ -132,6 +135,9 @@ void Config::begin()
 
     _modbusEnabled = readBool("modbusEnabled", _modbusEnabled);
     _telnetEnabled = readBool("telnetEnabled", _telnetEnabled);
+
+    _ntpServer = readString("ntpServer", _ntpServer);
+    if (_ntpServer.empty() || !isNtpServerValid(_ntpServer)) _ntpServer = DEFAULT_NTP_SERVER;
 
     std::string storedHostname = readString("hostname", _hostname);
     if (isHostnameValid(storedHostname)) {
@@ -414,4 +420,26 @@ void Config::setHostname(const std::string &value){
     if (_hostname == sanitized) return;
     _hostname = sanitized;
     writeString("hostname", _hostname);
+}
+
+std::string Config::getNtpServer(){
+    return _ntpServer;
+}
+
+// empty restores the default server
+void Config::setNtpServer(const std::string &value){
+    const std::string server = value.empty() ? std::string(DEFAULT_NTP_SERVER) : value;
+    if (!isNtpServerValid(server) || _ntpServer == server) return;
+    _ntpServer = server;
+    writeString("ntpServer", _ntpServer);
+}
+
+// host name or IPv4 address, empty for the default
+bool Config::isNtpServerValid(const std::string &value)
+{
+    if (value.length() > 63) return false;
+    for (char c : value) {
+        if (!isalnum((unsigned char)c) && c != '-' && c != '.') return false;
+    }
+    return value.empty() || (value.front() != '.' && value.back() != '.');
 }

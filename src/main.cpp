@@ -1,5 +1,6 @@
 #include "main.h"
 #include "ethernet_jl1101.h"
+#include "time_sync.h"
 #include "driver/gpio.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -230,6 +231,8 @@ static void main_task(void *pvParameters)
         wifiNativeConnectSta();
     }
 #endif
+
+    timeSyncStart(config.getNtpServer());
 
     if (shouldStartModbusNow(config)) {
         ESP_LOGI(TAG, "modbus start");

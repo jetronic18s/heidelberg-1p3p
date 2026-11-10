@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <vector>
 
+#include "time_sync.h"
 #include "wifi_native.h"
 
 #define ETAG "\"" __DATE__ "" __TIME__ "\""
@@ -487,6 +488,7 @@ static esp_err_t handleStatusGet(httpd_req_t *req)
   sendTableRow(body, "Telnet Debug", (s_config->getModbusEnabled() && s_config->getTelnetEnabled()) ? "enabled (port 23)" : "disabled");
 
   sendTableSection(body, "System");
+  sendTableRow(body, "Time", timeStatusText());
   sendTableRow(body, "Version", APP_VERSION);
   sendTableRow(body, "Build time", __DATE__ " " __TIME__);
   sendTableRow(body, "Uptime", Uptime());
@@ -550,6 +552,7 @@ static esp_err_t handleConfigGet(httpd_req_t *req)
   const std::string err = findParam(query, "err");
   bool hostnameInvalid = err == "hostname";
   bool ipInvalid = err == "ip";
+  bool ntpInvalid = err == "ntp";
 
   std::string body;
   sendResponseHeader(body, "Config");
@@ -562,6 +565,12 @@ static esp_err_t handleConfigGet(httpd_req_t *req)
   appendf(body, "<tr><td><label for=\"hostname\">Hostname</label></td><td><input type=\"text\" id=\"hostname\" name=\"hostname\" value=\"%s\">", escapeHtml(s_config->getHostname()).c_str());
   if (hostnameInvalid) {
     body += "<span class=\"e\" style=\"margin-left:0.6em;\">Ungueltiger Hostname (1-32 Zeichen, A-Z, 0-9, '-'; kein '-' am Anfang/Ende)</span>";
+  }
+  body += "</td></tr>";
+
+  appendf(body, "<tr><td><label for=\"ntp\">NTP server</label></td><td><input type=\"text\" id=\"ntp\" name=\"ntp\" value=\"%s\" placeholder=\"pool.ntp.org\">", escapeHtml(s_config->getNtpServer()).c_str());
+  if (ntpInvalid) {
+    body += "<span class=\"e\" style=\"margin-left:0.6em;\">Ungueltiger NTP-Server (Hostname oder IPv4-Adresse, leer = pool.ntp.org)</span>";
   }
   body += "</td></tr>";
 
@@ -629,6 +638,16 @@ static esp_err_t handleConfigPost(httpd_req_t *req)
       ethernetSetHostname(s_config->getHostname().c_str());
 #endif
     }
+  }
+
+  if (hasParam(params, "ntp")) {
+    std::string ntp = findParam(params, "ntp");
+    if (!Config::isNtpServerValid(ntp)) {
+      redirect(req, "/config?err=ntp");
+      return ESP_OK;
+    }
+    s_config->setNtpServer(ntp);
+    timeSyncSetServer(s_config->getNtpServer());
   }
 
   const bool wifiDhcp = hasParam(params, "wifimode") ? (findParam(params, "wifimode") == "dhcp") : s_config->getWifiDhcp();

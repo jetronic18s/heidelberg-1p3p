@@ -10,6 +10,7 @@ set(MAIN_SRCS
     "${SRC_DIR}/main.cpp"
     "${SRC_DIR}/pages.cpp"
     "${SRC_DIR}/switch.cpp"
+    "${SRC_DIR}/time_sync.cpp"
     "${SRC_DIR}/wifi_native.cpp"
     "${SRC_DIR}/uptime_native.cpp"
 )
