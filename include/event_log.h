@@ -19,6 +19,7 @@
         WallboxBack,        // value = duration ms
         SafetyFault,        // value = fault code
         ModbusRefused,      // value = refused connections since the last entry
+        LogCleared,         // the log was cleared on the web page
     };
 
     enum class RestartSource : uint8_t { WebPage = 1, FirmwareUpdate, WifiSettings };
@@ -33,6 +34,8 @@
     // Holds the log until the restart, so that no entry is half written
     // when esp_restart() runs. Call right before esp_restart().
     void eventLogLockForRestart();
+    // Drops all entries and logs LogCleared; the car state is kept.
+    void eventLogClear();
     // Table rows for the status page, newest first.
     std::string eventLogHtml();
 

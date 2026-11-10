@@ -492,6 +492,8 @@ static esp_err_t handleStatusGet(httpd_req_t *req)
   sendTableSection(body, "Events");
   body += eventLogHtml();
   body += "</table><p></p>";
+  body += "<form method=\"post\" action=\"/events\" onsubmit=\"return confirm('Clear the event log?')\">"
+          "<button class=\"r\">Clear event log</button></form><p></p>";
 
   if (s_config->getModbusEnabled()) {
     body += "<form method=\"post\"><button class=\"r\">Update register</button></form><p></p>";
@@ -508,6 +510,14 @@ static esp_err_t handleStatusGet(httpd_req_t *req)
 static esp_err_t handleStatusPost(httpd_req_t *req)
 {
   s_phase_switch->updateCachedRegisters();
+  redirect(req, "/status");
+  return ESP_OK;
+}
+
+static esp_err_t handleEventsPost(httpd_req_t *req)
+{
+  dbgln("[webserver] POST /events");
+  eventLogClear();
   redirect(req, "/status");
   return ESP_OK;
 }
@@ -1079,6 +1089,7 @@ void setupPages(PhaseSwitch *phaseSwitch, Config *config)
   registerUri("/", HTTP_GET, handleRootGet);
   registerUri("/status", HTTP_GET, handleStatusGet);
   registerUri("/status", HTTP_POST, handleStatusPost);
+  registerUri("/events", HTTP_POST, handleEventsPost);
   registerUri("/reboot", HTTP_GET, handleRebootGet);
   registerUri("/reboot", HTTP_POST, handleRebootPost);
   registerUri("/config", HTTP_GET, handleConfigGet);

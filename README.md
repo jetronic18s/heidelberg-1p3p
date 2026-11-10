@@ -96,7 +96,7 @@ Der Abschnitt **Events** listet die letzten 100 Ereignisse, z. B.:
 
 Protokolliert werden Starts mit dem Grund, Neustarts (Webseite, Firmware-Update, WLAN-Einstellungen), Umschaltungen mit Auslöser (evcc oder Webseite) und Dauer, Auto angesteckt/abgesteckt, Laden gestartet/beendet mit der geladenen Energie, evcc-Timeouts und Wallbox-Aussetzer mit ihrer Dauer, Safety Faults und abgewiesene Modbus-Verbindungen. Pausiert das Laden in den ersten 90 s nach einer Umschaltung oder einem Start, zählt das nicht als Ladeende.
 
-Das Protokoll übersteht Neustarts, OTA-Updates und Abstürze, ein Stromausfall löscht es. Die Uhrzeit kommt per NTP (siehe Config); solange sie nicht gesetzt ist, steht dort die Zeit seit dem Start, z. B. `start 3 + 00:12:05`.
+Das Protokoll übersteht Neustarts, OTA-Updates und Abstürze, ein Stromausfall löscht es. Mit **Clear event log** unter dem Protokoll lässt es sich von Hand leeren (mit Rückfrage), etwa nach der Inbetriebnahme; danach steht dort als erster Eintrag `event log cleared on the web page`. Die Schaltspiel-Zähler bleiben dabei bewusst erhalten. Die Uhrzeit kommt per NTP (siehe Config); solange sie nicht gesetzt ist, steht dort die Zeit seit dem Start, z. B. `start 3 + 00:12:05`.
 
 ### DHCP vs. statische IP
 

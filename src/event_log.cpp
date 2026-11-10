@@ -111,6 +111,18 @@ void eventLogLockForRestart()
   s_mutex.lock();
 }
 
+void eventLogClear()
+{
+  {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    if (s_log.magic != EVENT_LOG_MAGIC) return;
+    s_log.head = 0;
+    s_log.count = 0;
+    s_log.crc = logCrc();
+  }
+  eventLog(EventType::LogCleared);
+}
+
 uint8_t eventLogCarClass()
 {
   std::lock_guard<std::mutex> lock(s_mutex);
@@ -213,6 +225,7 @@ static std::string eventText(const EventEntry &e)
       snprintf(buf, sizeof(buf), "%lu Modbus TCP connections refused (client limit reached)",
                (unsigned long)e.value);
       return buf;
+    case EventType::LogCleared: return "event log cleared on the web page";
   }
   return "unknown event";
 }
