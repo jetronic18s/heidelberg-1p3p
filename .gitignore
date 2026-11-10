@@ -5,3 +5,4 @@ components/
 managed_components/
 dependencies.lock
 sdkconfig.old
+__pycache__/
