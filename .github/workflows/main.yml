@@ -33,7 +33,8 @@ jobs:
           cp build/partition_table/partition-table.bin dist/heidelberg-1p3p-flash-bundle/
           cp build/ota_data_initial.bin dist/heidelberg-1p3p-flash-bundle/
           cp build/heidelberg-1p3p.bin dist/heidelberg-1p3p-flash-bundle/
-          cp build/flash_args dist/heidelberg-1p3p-flash-bundle/
+          # flash_args from the build points into subdirectories; the bundle is flat
+          sed -e 's#bootloader/##' -e 's#partition_table/##' build/flash_args > dist/heidelberg-1p3p-flash-bundle/flash_args
           cp build/flasher_args.json dist/heidelberg-1p3p-flash-bundle/
           cat > dist/heidelberg-1p3p-flash-bundle/README.txt << 'EOF'
           Heidelberg 1p3p ESP-IDF Flash Bundle
@@ -44,30 +45,45 @@ jobs:
           - partition-table.bin
           - ota_data_initial.bin
           - heidelberg-1p3p.bin
-          - flash_args
+          - flash_args (addresses and files for esptool, see below)
           - flasher_args.json
 
-          Flash with esptool v5 (ESP32):
-          1. Put device into flash mode and connect serial adapter (e.g. /dev/ttyUSB0).
-          2. Run:
+          Flash over USB serial (ESP32):
+          1. Put the device into flash mode and connect the serial adapter
+             (e.g. /dev/ttyUSB0, on Windows COM3 or similar).
+          2. In this folder, run with esptool v5:
 
              python3 -m esptool --port /dev/ttyUSB0 --chip esp32 -b 115200 --before default-reset --after hard-reset write-flash --flash-mode dio --flash-size 4MB --flash-freq 40m 0x1000 bootloader.bin 0x8000 partition-table.bin 0xe000 ota_data_initial.bin 0x10000 heidelberg-1p3p.bin
 
-          Alternative:
-          - Use your local project's helper script:
-            ./scripts/flash.sh /dev/ttyUSB0
+             or with esptool v4 (check with: python3 -m esptool version), which
+             spells the commands and options with underscores:
 
-          Coming from zivillian's Arduino firmware (e.g. 0.0.2): the partition
-          table differs, so erase the whole flash once before step 2:
+             python3 -m esptool --port /dev/ttyUSB0 --chip esp32 -b 115200 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 4MB --flash_freq 40m 0x1000 bootloader.bin 0x8000 partition-table.bin 0xe000 ota_data_initial.bin 0x10000 heidelberg-1p3p.bin
+
+             Shorter, same result: write-flash @flash_args (v4: write_flash @flash_args)
+
+          Erase the whole flash once before step 2 when
+          - coming from zivillian's Arduino firmware (e.g. 0.0.2), or
+          - the status page shows "Firmware slots ... 1024 kB" (old partition
+            table with 1 MB slots): newer firmware no longer fits, an OTA update
+            is refused ("OTA image too large", older versions report a write
+            error) and the running firmware stays active. Firmware older
+            than v1.1.4 does not show this row; if in doubt, update to v1.1.4 by
+            OTA first (it fits in 1 MB) and look, or simply flash this bundle.
 
              python3 -m esptool --port /dev/ttyUSB0 --chip esp32 erase-flash
+             (esptool v4: erase_flash)
 
           This also erases WiFi credentials and settings; set them up again in
-          the web UI (without LAN: setup portal at http://192.168.4.1).
+          the web UI (without LAN: setup portal at http://192.168.4.1). After
+          that, all further updates work by OTA.
 
           Notes:
           - The addresses above match the project's ESP-IDF build output.
-          - If flashing fails, reduce baud rate (for example: 115200).
+          - From a cloned and built repository, ./scripts/flash.sh /dev/ttyUSB0
+            does the same.
+          - If flashing fails, check the flash mode wiring and try again; a
+            shorter cable or another USB port can help.
           EOF
 
       - name: Upload firmware bundle artifact
