@@ -56,13 +56,14 @@ Die Statusseite ist in Abschnitte gegliedert:
 
 | Abschnitt | Inhalt |
 | --------- | ------ |
-| Phase switch | Zustand, Safety Fault, Umschaltungen, Relais und Rückmeldungen der Schütze |
+| Phase switch | Zustand, Safety Fault, Umschaltungen, Relais und Rückmeldungen der Schütze, Schaltspiele |
 | evcc (Modbus TCP) | letzte Anfrage von evcc, Watchdog-Timeouts, IP des verbundenen evcc, Bridge-Zähler |
 | Wallbox (RS485) | Verbindung zur Wallbox, Ausfälle, Wallbox-Daten, RTU-Zähler |
 | Wallbox values | Messwerte der Wallbox: Status, Ströme, Spannungen, Leistung, Energie, Temperatur |
 | Wallbox settings | Watchdog-Zeit, Failsafe-Strom, Ladestrom, Fernsperre, Standby |
 | Network | LAN, WLAN, Telnet-Debug |
-| System | Version, Build-Zeit, Laufzeit, Grund des letzten Neustarts, Speicher |
+| System | Uhrzeit, Version, Build-Zeit, Laufzeit, Grund des letzten Neustarts, Firmware-Slots, Speicher |
+| Events | Ereignisprotokoll, neueste Einträge oben (siehe unten) |
 
 Für die Fehlersuche besonders nützlich:
 
@@ -70,17 +71,40 @@ Für die Fehlersuche besonders nützlich:
 | ----- | -------- | --------- |
 | `Phase switches` | `12 since power-on, last 1p to 3p 14 min ago, took 36 s` | Umschaltungen seit dem letzten Einschalten (zählt über Neustarts und OTA-Updates hinweg); zeigt, ob evcc ständig umschaltet. Eine gemerkte Anforderung erscheint als `pending: 3p` |
 | `Contactors` | `1p relay on / feedback on, 3p relay off / feedback off` | Sollzustand der Relais und Rückmeldung der Hilfskontakte; passen sie nicht zusammen, stimmt etwas mit Schütz oder Verdrahtung nicht |
+| `Contactor cycles` | `1p 412x on, 3p 405x on, 790 phase switches (since v1.2.0)` | Einschaltungen je Schütz und Umschaltungen insgesamt, bleiben auch über einen Stromausfall erhalten (Verschleiß der Schütze). Gezählt wird ab v1.2.0 |
 | `evcc` | `last request 2.8 s ago, 0 timeouts since power-on` | letzte Anfrage von evcc und wie oft der Watchdog den Failsafe-Strom gesetzt hat |
 | `evcc client` | `192.168.178.9, 1 connected` | wer zuletzt verbunden war: so fällt eine zweite evcc-Instanz auf |
 | `Wallbox` | `ok, last answer 0.5 s ago, 0/110 errors (last minute)` | Verbindung zur Wallbox: letzte Antwort, Fehler in der letzten Minute. Im Fehlerfall `not responding for 75 s (timeout)` |
 | `Wallbox history` | `1x not responding since power-on, last 3.5 h ago for 75 s; last error: timeout 2 min ago` | Ausfälle seit dem letzten Einschalten und der letzte Fehler. Ein `timeout` deutet eher auf Kabel oder ausgeschaltete Box hin, `CRC error` oder `invalid response` eher auf Störungen |
 | `Wallbox info` | `hardware current 6-16 A, software revision 105` | Drehschalter-Einstellung (Register 100/101) und Software-Revision der Wallbox (Register 203) |
 | `Last restart` | `brownout (supply voltage dropped)` | Grund des letzten Neustarts des ESP. `brownout` oder `crash` deuten auf Störungen der Versorgung hin, z. B. durch ein brummendes Schütz |
+| `Firmware slots` | `app0 1280 kB (running), app1 1280 kB` | die beiden Speicherplätze für die Firmware. Zeigen sie `1024 kB` (alte Partitionstabelle), passen neuere Versionen nicht mehr per OTA: einmal per USB-Seriell den Flash löschen und das Flash-Bundle flashen |
 | `Memory` | `145 kB free, minimum 143 kB` | freier Speicher; sinkt das Minimum über Wochen stetig, verliert die Firmware Speicher |
+
+#### Ereignisprotokoll
+
+Der Abschnitt **Events** listet die letzten 100 Ereignisse, z. B.:
+
+```
+10.11.2026 16:13:34   phase switch 1p to 3p (evcc), took 37.0 s
+10.11.2026 16:10:14   charging stopped, 3.2 kWh
+10.11.2026 16:04:44   evcc back after 16.3 s
+10.11.2026 16:04:28   evcc timeout, failsafe current 0.0 A
+10.11.2026 15:58:35   start: software (reboot, OTA)
+10.11.2026 15:58:35   restart requested on the web page
+```
+
+Protokolliert werden Starts mit dem Grund, Neustarts (Webseite, Firmware-Update, WLAN-Einstellungen), Umschaltungen mit Auslöser (evcc oder Webseite) und Dauer, Auto angesteckt/abgesteckt, Laden gestartet/beendet mit der geladenen Energie, evcc-Timeouts und Wallbox-Aussetzer mit ihrer Dauer, Safety Faults und abgewiesene Modbus-Verbindungen. Pausiert das Laden in den ersten 90 s nach einer Umschaltung oder einem Start, zählt das nicht als Ladeende.
+
+Das Protokoll übersteht Neustarts, OTA-Updates und Abstürze, ein Stromausfall löscht es. Die Uhrzeit kommt per NTP (siehe Config); solange sie nicht gesetzt ist, steht dort die Zeit seit dem Start, z. B. `start 3 + 00:12:05`.
 
 ### DHCP vs. statische IP
 
 Unter **Config** kann zwischen DHCP und statischer IP gewechselt werden – sowohl für Ethernet als auch für WiFi. Für statische IP bitte `IP`, `Gateway`, `Netmask` und `DNS` eintragen. (WiFi-Änderungen werden nach einem Reboot zuverlässig aktiv.)
+
+### Zeitserver (NTP)
+
+Unter **Config** kann der NTP-Server eingestellt werden (Hostname oder IPv4-Adresse), Vorgabe ist `pool.ntp.org`; ein leeres Feld setzt wieder die Vorgabe. Bei statischer IP muss ein DNS-Server eingetragen sein, sonst lässt sich `pool.ntp.org` nicht auflösen; alternativ einen NTP-Server per IP-Adresse eintragen. Die Uhrzeit (deutsche Zeit mit Sommerzeit) steht unter **System** auf der Statusseite.
 
 ### Hostname
 
