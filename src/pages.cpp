@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <vector>
 
+#include "event_log.h"
 #include "time_sync.h"
 #include "wifi_native.h"
 
@@ -190,16 +191,18 @@ static void scheduleRestart(uint64_t delayUs)
     esp_timer_create_args_t args = {};
     args.callback = [](void *) {
       if (s_phase_switch == nullptr) {
+        eventLogLockForRestart();
         esp_restart();
       }
       // Let the phase switch stop charging and restart; force it if that hangs.
       s_phase_switch->requestRestart();
       esp_timer_create_args_t fallbackArgs = {};
-      fallbackArgs.callback = [](void *) { esp_restart(); };
+      fallbackArgs.callback = [](void *) { eventLogLockForRestart(); esp_restart(); };
       fallbackArgs.name = "restart_fallback";
       esp_timer_handle_t fallback = nullptr;
       if (esp_timer_create(&fallbackArgs, &fallback) != ESP_OK
           || esp_timer_start_once(fallback, RESTART_FALLBACK_US) != ESP_OK) {
+        eventLogLockForRestart();
         esp_restart();
       }
     };
@@ -397,23 +400,6 @@ static std::string firmwareSlotsText()
   return text;
 }
 
-static const char *resetReasonText(esp_reset_reason_t reason)
-{
-  switch (reason) {
-    case ESP_RST_POWERON: return "power-on";
-    case ESP_RST_EXT: return "reset pin";
-    case ESP_RST_SW: return "software (reboot, OTA)";
-    case ESP_RST_PANIC: return "crash (panic)";
-    case ESP_RST_INT_WDT: return "interrupt watchdog";
-    case ESP_RST_TASK_WDT: return "task watchdog";
-    case ESP_RST_WDT: return "watchdog";
-    case ESP_RST_DEEPSLEEP: return "deep sleep";
-    case ESP_RST_BROWNOUT: return "brownout (supply voltage dropped)";
-    case ESP_RST_SDIO: return "SDIO";
-    default: return "unknown";
-  }
-}
-
 static esp_err_t handleStatusGet(httpd_req_t *req)
 {
   dbgln("[webserver] GET /status");
@@ -500,6 +486,9 @@ static esp_err_t handleStatusGet(httpd_req_t *req)
   snprintf(heap, sizeof(heap), "%u kB free, minimum %u kB",
            (unsigned)(esp_get_free_heap_size() / 1024), (unsigned)(esp_get_minimum_free_heap_size() / 1024));
   sendTableRow(body, "Memory", heap);
+
+  sendTableSection(body, "Events");
+  body += eventLogHtml();
   body += "</table><p></p>";
 
   if (s_config->getModbusEnabled()) {
@@ -541,6 +530,7 @@ static esp_err_t handleRebootPost(httpd_req_t *req)
   body += "<p>Rebooting...</p>";
   sendResponseTrailer(body);
   sendHtml(req, body);
+  eventLog(EventType::RestartRequested, (uint8_t)RestartSource::WebPage);
   scheduleRestart(250000);
   return ESP_OK;
 }
@@ -845,6 +835,7 @@ static esp_err_t handleUpdatePost(httpd_req_t *req)
 
   guard.done = true;
   sendText(req, "200 OK", "Update successful. Rebooting...");
+  eventLog(EventType::RestartRequested, (uint8_t)RestartSource::FirmwareUpdate);
   scheduleRestart(500000);
   return ESP_OK;
 }
@@ -874,6 +865,7 @@ static esp_err_t handleWifiPost(httpd_req_t *req)
   body += "<p>WiFi config will be erased after reboot. Rebooting...</p>";
   sendResponseTrailer(body);
   sendHtml(req, body);
+  eventLog(EventType::RestartRequested, (uint8_t)RestartSource::WifiSettings);
   scheduleRestart(300000);
   return ESP_OK;
 }
@@ -1003,6 +995,7 @@ static esp_err_t handleWifiSetupPost(httpd_req_t *req)
   body += "<p>Saved. Rebooting...</p>";
   sendResponseTrailer(body);
   sendHtml(req, body);
+  eventLog(EventType::RestartRequested, (uint8_t)RestartSource::WifiSettings);
   scheduleRestart(300000);
   return ESP_OK;
 }

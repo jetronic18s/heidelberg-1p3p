@@ -243,6 +243,7 @@ void PhaseSwitch::saveBootCache(){
 
 void PhaseSwitch::restartNow(){
   saveBootCache();
+  eventLogLockForRestart();
   esp_restart();
 }
 

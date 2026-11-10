@@ -7,6 +7,7 @@ set(MAIN_SRCS
     "${SRC_DIR}/config.cpp"
     "${SRC_DIR}/debug.cpp"
     "${SRC_DIR}/ethernet_jl1101.cpp"
+    "${SRC_DIR}/event_log.cpp"
     "${SRC_DIR}/main.cpp"
     "${SRC_DIR}/pages.cpp"
     "${SRC_DIR}/switch.cpp"
