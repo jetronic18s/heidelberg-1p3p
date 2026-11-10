@@ -228,6 +228,10 @@ static std::string eventText(const EventEntry &e)
     case EventType::LogCleared: return "event log cleared on the web page";
     case EventType::ChargePaused: return "charging paused, the car waits for current";
     case EventType::ChargeResumed: return "charging resumed";
+    case EventType::SwitchAborted:
+      snprintf(buf, sizeof(buf), "phase switch %up to %up (%s) given up, the wallbox does not answer", e.a, e.b,
+               (SwitchSource)e.c == SwitchSource::WebPage ? "web page" : "evcc");
+      return buf;
   }
   return "unknown event";
 }

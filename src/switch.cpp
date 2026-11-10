@@ -208,6 +208,8 @@ PhaseSwitch::PhaseSwitch()
   ,_lastSwitchFrom(0)
   ,_lastSwitchTo(0)
   ,_switchSource(0)
+  ,_prevSwitchFrom(0)
+  ,_prevSwitchTo(0)
   ,_refusedSinceLog(0)
   ,_lastRefusedLogMs(0)
   ,_carQuietUntilMs(0)
@@ -621,6 +623,14 @@ void PhaseSwitch::loop(){
   else if (_state == State::SwitchPhases){
     if (masterWriteHolding(HEC_REG_MAX_CURRENT, 0) != ESP_OK
         || masterWriteHolding(HEC_REG_REMOTE_LOCK, 0) != ESP_OK) {
+      checkWallboxSilent();
+      if (_wallboxSilent) {
+        // Nothing was written and the contactors are as before: give the
+        // switch up and go back to Running, where evcc gets errors for a
+        // silent wallbox instead of cached values.
+        abortSwitch();
+        return;
+      }
       _previous = nowMs();
       _delay = 500;
       return;
@@ -640,6 +650,9 @@ void PhaseSwitch::loop(){
       _state = State::ConfirmedZero;
       return;
     }
+    // 0 A and the lock are written: waiting is safe. A silent wallbox is
+    // reported, and the switch goes on once it answers again.
+    checkWallboxSilent();
     if (pastDeadline(_zeroLoadDeadlineMs)) {
       ESP_LOGW(TAG, "timeout waiting for lock and zero current, writing them again");
       masterWriteHolding(HEC_REG_MAX_CURRENT, 0);
@@ -722,10 +735,22 @@ void PhaseSwitch::loop(){
         }
       }
     }
-    if (masterWriteHolding(HEC_REG_MAX_CURRENT, restartCurrent) != ESP_OK) return;
+    // Until both writes went through, the wallbox stays locked: safe to
+    // wait. Report a silent wallbox and try again every 500 ms.
+    if (masterWriteHolding(HEC_REG_MAX_CURRENT, restartCurrent) != ESP_OK) {
+      checkWallboxSilent();
+      _previous = nowMs();
+      _delay = 500;
+      return;
+    }
     cacheHolding(HEC_REG_MAX_CURRENT, &restartCurrent, 1);
     // Release the remote lock only once the restart current is in place.
-    if (masterWriteHolding(HEC_REG_REMOTE_LOCK, 1) != ESP_OK) return;
+    if (masterWriteHolding(HEC_REG_REMOTE_LOCK, 1) != ESP_OK) {
+      checkWallboxSilent();
+      _previous = nowMs();
+      _delay = 500;
+      return;
+    }
 
     {
       std::lock_guard<std::mutex> cacheLock(_cacheMutex);
@@ -826,9 +851,32 @@ void PhaseSwitch::handleRestart(){
 }
 
 // Callers hold _stateMutex.
+// The wallbox did not take 0 A and the lock: the contactors were not
+// touched, so the switch is simply given up.
+void PhaseSwitch::abortSwitch(){
+  ESP_LOGW(TAG, "phase switch to %up given up, the wallbox does not answer", (unsigned)_lastSwitchTo);
+  eventLog(EventType::SwitchAborted, _lastSwitchFrom, _lastSwitchTo, _switchSource);
+  _desiredPhases = _lastSwitchFrom.load();
+  _switchStartMs = 0;
+  // the status page shows the last completed switch again; the event log
+  // has the given up one
+  _switchCount--;
+  _lastSwitchFrom = _prevSwitchFrom.load();
+  _lastSwitchTo = _prevSwitchTo.load();
+  {
+    std::lock_guard<std::mutex> cacheLock(_cacheMutex);
+    _phaseSwitchRequested = false;
+    _currentWrittenDuringSwitch = false;
+  }
+  _state = State::Running;
+}
+
 void PhaseSwitch::startSwitch(uint8_t phases, uint8_t source){
   if (phases == 1 ? !canSwitchTo1P() : !canSwitchTo3P()) return;
   rememberCarState();
+  // kept for abortSwitch(), which puts the status page back
+  _prevSwitchFrom = _lastSwitchFrom.load();
+  _prevSwitchTo = _lastSwitchTo.load();
   _lastSwitchFrom = _desiredPhases.load();
   _lastSwitchTo = phases;
   _switchSource = source;

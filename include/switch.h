@@ -127,7 +127,7 @@
             // write, so the failsafe cannot overwrite evcc's next current.
             std::mutex _evccMutex;
             std::atomic<uint32_t> _lastWallboxOkMs; // last successful Modbus RTU transaction
-            std::atomic<bool> _wallboxSilent; // wallbox not answering in Running
+            std::atomic<bool> _wallboxSilent; // wallbox not answering (Running or during a switch)
             std::atomic<uint32_t> _wallboxSilentSinceMs;
             // wallbox and evcc diagnostics for the status page
             std::atomic<uint32_t> _rtuWindowStartMs, _rtuWindowMsgs, _rtuWindowErrs;
@@ -143,6 +143,7 @@
             std::atomic<uint32_t> _switchCount; // read by the web page
             std::atomic<uint32_t> _switchStartMs, _lastSwitchDoneMs, _lastSwitchMs;
             std::atomic<uint8_t> _lastSwitchFrom, _lastSwitchTo, _switchSource;
+            std::atomic<uint8_t> _prevSwitchFrom, _prevSwitchTo;
             // refused Modbus TCP connections, logged at most once a minute
             std::atomic<uint32_t> _refusedSinceLog; // bridge task counts, main loop flushes
             std::atomic<uint32_t> _lastRefusedLogMs;
@@ -163,6 +164,7 @@
             void finishSwitchStats();
             void rememberCarState();
             void logCarState();
+            void abortSwitch();
             bool writeRestartStop();
             void logRefusedConnections(bool now);
             void saveBootCache();

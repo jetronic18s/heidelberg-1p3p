@@ -22,6 +22,7 @@
         LogCleared,         // the log was cleared on the web page
         ChargePaused,       // the car waits for current (status C1)
         ChargeResumed,
+        SwitchAborted,      // a = from, b = to, c = SwitchSource
     };
 
     enum class RestartSource : uint8_t { WebPage = 1, FirmwareUpdate, WifiSettings };
