@@ -576,6 +576,7 @@ static esp_err_t handleConfigGet(httpd_req_t *req)
   bool hostnameInvalid = err == "hostname";
   bool ipInvalid = err == "ip";
   bool ntpInvalid = err == "ntp";
+  bool sdInvalid = err == "sd";
 
   std::string body;
   sendResponseHeader(body, "Config");
@@ -583,7 +584,11 @@ static esp_err_t handleConfigGet(httpd_req_t *req)
     body += "<p class=\"e\">Ungueltige statische IP-Konfiguration (IP, Gateway, Netmask und optional DNS muessen gueltige IPv4-Adressen sein).</p>";
   }
   body += "<form method=\"post\"><table>";
-  appendf(body, "<tr><td><label for=\"sd\">Phase switch delay (ms)</label></td><td><input type=\"number\" min=\"1\" id=\"sd\" name=\"sd\" value=\"%lu\"></td></tr>", (unsigned long)s_config->getSwitchDelay());
+  appendf(body, "<tr><td><label for=\"sd\">Phase switch delay (ms)</label></td><td><input type=\"number\" min=\"%lu\" max=\"%lu\" id=\"sd\" name=\"sd\" value=\"%lu\">", (unsigned long)Config::MIN_SWITCH_DELAY_MS, (unsigned long)Config::MAX_SWITCH_DELAY_MS, (unsigned long)s_config->getSwitchDelay());
+  if (sdInvalid) {
+    body += "<span class=\"e\" style=\"margin-left:0.6em;\">Ungueltige Verzoegerung (1000-600000 ms)</span>";
+  }
+  body += "</td></tr>";
 
   appendf(body, "<tr><td><label for=\"hostname\">Hostname</label></td><td><input type=\"text\" id=\"hostname\" name=\"hostname\" value=\"%s\">", escapeHtml(s_config->getHostname()).c_str());
   if (hostnameInvalid) {
@@ -643,7 +648,15 @@ static esp_err_t handleConfigPost(httpd_req_t *req)
   if (!readForm(req, params)) return ESP_FAIL; // closes the connection
 
   if (hasParam(params, "sd")) {
-    uint32_t delay = (uint32_t)strtoul(findParam(params, "sd").c_str(), nullptr, 10);
+    const std::string text = findParam(params, "sd");
+    char *end = nullptr;
+    const unsigned long value = strtoul(text.c_str(), &end, 10);
+    if (text.empty() || text[0] == '-' || *end != '\0' || value > UINT32_MAX
+        || !Config::isSwitchDelayValid((uint32_t)value)) {
+      redirect(req, "/config?err=sd");
+      return ESP_OK;
+    }
+    const uint32_t delay = (uint32_t)value;
     s_config->setSwitchDelay(delay);
     s_phase_switch->setSwitchDelay(delay);
     dbgln("[webserver] saved switch delay");

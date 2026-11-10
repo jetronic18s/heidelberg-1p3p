@@ -101,6 +101,10 @@
             void setNtpServer(const std::string &value);
             static bool isHostnameValid(const std::string &value);
             static bool isNtpServerValid(const std::string &value);
+            // The contactors need time to open; longer than 10 min is a typo.
+            static constexpr uint32_t MIN_SWITCH_DELAY_MS = 1000;
+            static constexpr uint32_t MAX_SWITCH_DELAY_MS = 600000;
+            static bool isSwitchDelayValid(uint32_t value);
             static bool isIpv4Valid(const std::string &value, bool allowEmpty = false);
     };
 

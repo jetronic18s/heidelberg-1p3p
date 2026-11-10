@@ -111,7 +111,10 @@ void Config::begin()
     ESP_ERROR_CHECK(err);
     _nvsReady = true;
 
-    _switchDelay = readUInt32("switchDelay", _switchDelay);
+    const uint32_t switchDelay = readUInt32("switchDelay", _switchDelay);
+    // a value saved before the range check: bring it into range
+    _switchDelay = switchDelay < MIN_SWITCH_DELAY_MS ? MIN_SWITCH_DELAY_MS
+      : switchDelay > MAX_SWITCH_DELAY_MS ? MAX_SWITCH_DELAY_MS : switchDelay;
     _ethDhcp = readBool("ethDhcp", _ethDhcp);
     _ethIp = readString("ethIp", _ethIp);
     _ethGw = readString("ethGw", _ethGw);
@@ -245,7 +248,7 @@ uint32_t Config::getSwitchDelay(){
 }
 
 void Config::setSwitchDelay(uint32_t value){
-    if (_switchDelay == value) return;
+    if (!isSwitchDelayValid(value) || _switchDelay == value) return;
     _switchDelay = value;
     writeUInt32("switchDelay", _switchDelay);
 }
@@ -435,6 +438,11 @@ void Config::setNtpServer(const std::string &value){
 }
 
 // host name or IPv4 address, empty for the default
+bool Config::isSwitchDelayValid(uint32_t value)
+{
+    return value >= MIN_SWITCH_DELAY_MS && value <= MAX_SWITCH_DELAY_MS;
+}
+
 bool Config::isNtpServerValid(const std::string &value)
 {
     if (value.length() > 63) return false;
