@@ -39,6 +39,22 @@ static bool pastDeadline(uint32_t deadlineMs)
   return (int32_t)(nowMs() - deadlineMs) > 0;
 }
 
+// The feedback inputs are read every pass of the main loop (about 10 ms).
+// GPIO36/39 can glitch for a moment (ESP32 errata), and a contactor
+// bounces when it moves: a fault needs the same pattern for 100 ms.
+static constexpr uint32_t FEEDBACK_DEBOUNCE_MS = 100;
+
+// sinceMs: 0 while the condition is not met, else when it started
+static bool persistsFor(bool condition, uint32_t &sinceMs, uint32_t durationMs)
+{
+  if (!condition) {
+    sinceMs = 0;
+    return false;
+  }
+  if (sinceMs == 0) sinceMs = nowMs() | 1;
+  return nowMs() - sinceMs >= durationMs;
+}
+
 static constexpr uint16_t SAFETY_FAULT_NONE = 0x0000;
 static constexpr uint16_t SAFETY_FAULT_FEEDBACK_BOTH_ACTIVE = 0xE101;
 static constexpr uint16_t SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT = 0xE102;
@@ -198,6 +214,8 @@ PhaseSwitch::PhaseSwitch()
   ,_lastClientAddr(0)
   ,_restartDeadlineMs(0)
   ,_restartStopWritten(false)
+  ,_bothFeedbackSinceMs(0)
+  ,_invalidFeedbackSinceMs(0)
 {}
 
 void PhaseSwitch::begin(){
@@ -501,9 +519,12 @@ void PhaseSwitch::loop(){
   }
 
   if (oneFeedback && threeFeedback) {
-    enterSafetyFault(SAFETY_FAULT_FEEDBACK_BOTH_ACTIVE, "both contactor feedback inputs active");
-    return;
+    if (persistsFor(true, _bothFeedbackSinceMs, FEEDBACK_DEBOUNCE_MS)) {
+      enterSafetyFault(SAFETY_FAULT_FEEDBACK_BOTH_ACTIVE, "both contactor feedback inputs active");
+    }
+    return; // nothing else until it is gone or confirmed
   }
+  _bothFeedbackSinceMs = 0;
 
   if (_delay > 0){
     if (nowMs() - _previous < _delay){
@@ -564,10 +585,13 @@ void PhaseSwitch::loop(){
   }
 
   if (_state == State::Running) {
-    if ((!oneFeedback && !threeFeedback) || (oneFeedback && threeFeedback)) {
-      enterSafetyFault(SAFETY_FAULT_RUNNING_FEEDBACK_INVALID, "invalid contactor feedback while running");
+    if (oneFeedback == threeFeedback) {
+      if (persistsFor(true, _invalidFeedbackSinceMs, FEEDBACK_DEBOUNCE_MS)) {
+        enterSafetyFault(SAFETY_FAULT_RUNNING_FEEDBACK_INVALID, "invalid contactor feedback while running");
+      }
       return;
     }
+    _invalidFeedbackSinceMs = 0;
 
     // A phase request that came in while not Running.
     const uint8_t requested = _requestedPhases.exchange(0);

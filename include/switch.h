@@ -150,6 +150,8 @@
             std::atomic<uint32_t> _lastClientAddr; // last Modbus TCP client, network order
             uint32_t _restartDeadlineMs;
             bool _restartStopWritten;
+            uint32_t _bothFeedbackSinceMs;    // debounce, main loop only
+            uint32_t _invalidFeedbackSinceMs;
             void handleRestart();
             void requestPhases(uint8_t phases);
             // source: SwitchSource from event_log.h, for the event log
