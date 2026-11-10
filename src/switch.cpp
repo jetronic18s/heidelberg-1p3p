@@ -221,6 +221,9 @@ PhaseSwitch::PhaseSwitch()
   ,_restartDeadlineMs(0)
   ,_restartStopWritten(false)
   ,_cachedCurrentWrites(0)
+  ,_cachedLockWrites(0)
+  ,_updateCurrentWritesSeen(0)
+  ,_updateLockWritesSeen(0)
   ,_bothFeedbackSinceMs(0)
   ,_invalidFeedbackSinceMs(0)
 {}
@@ -361,7 +364,44 @@ bool PhaseSwitch::servesFromCache(){
 }
 
 void PhaseSwitch::setUpdateInProgress(bool inProgress){
-  _updateInProgress = inProgress;
+  std::unique_lock<std::mutex> lock(_cacheMutex);
+  if (inProgress) {
+    _updateCurrentWritesSeen = _cachedCurrentWrites;
+    _updateLockWritesSeen = _cachedLockWrites;
+    _updateInProgress = true;
+    return;
+  }
+  // A failed update (a successful one restarts): while it ran, evcc's
+  // writes only went to the cache. Send what evcc wrote meanwhile to the
+  // wallbox before serving it directly again; the end of the update happens
+  // under the cache lock, so no later write is lost.
+  for (int round = 0; ; round++) {
+    const bool current = _cachedCurrentWrites != _updateCurrentWritesSeen;
+    const bool locked = _cachedLockWrites != _updateLockWritesSeen;
+    // outside Running the switch or restart sets the wallbox itself; a
+    // client still writing after three rounds sends its newest value itself
+    if ((!current && !locked) || _state != State::Running || round == 3) {
+      if (round == 3 && (current || locked)) {
+        ESP_LOGW(TAG, "a client keeps writing, its newest value after the update may be lost");
+      }
+      _updateInProgress = false;
+      return;
+    }
+    _updateCurrentWritesSeen = _cachedCurrentWrites;
+    _updateLockWritesSeen = _cachedLockWrites;
+    const uint16_t currentValue = _holdingRegister[HEC_REG_MAX_CURRENT - HOLDING_REG_OFFSET];
+    const uint16_t lockValue = _holdingRegister[HEC_REG_REMOTE_LOCK - HOLDING_REG_OFFSET];
+    lock.unlock();
+    ESP_LOGI(TAG, "update failed, sending evcc's writes from meanwhile to the wallbox");
+    const bool ok = (!current || masterWriteHolding(HEC_REG_MAX_CURRENT, currentValue) == ESP_OK)
+      && (!locked || masterWriteHolding(HEC_REG_REMOTE_LOCK, lockValue) == ESP_OK);
+    lock.lock();
+    if (!ok) {
+      ESP_LOGW(TAG, "could not send evcc's writes, evcc sets them again");
+      _updateInProgress = false;
+      return;
+    }
+  }
 }
 
 // After a power-on there is no cache yet. Until the wallbox answers, report it
@@ -1273,7 +1313,14 @@ bool PhaseSwitch::updateCachedRegisters(){
       ESP_LOGE(TAG, "masterReadHolding failed: 0x%x (%s)", err, esp_err_to_name(err));
       return false;
   }
-  cacheHolding(257, holding, 6);
+  {
+    // During an update evcc's writes only go to the cache, and the wallbox
+    // keeps its old values until the update ends: do not overwrite them.
+    std::lock_guard<std::mutex> lock(_cacheMutex);
+    if (!_updateInProgress) {
+      std::copy(holding, holding + 6, _holdingRegister.begin() + (257 - HOLDING_REG_OFFSET));
+    }
+  }
   return true;
 }
 
@@ -1683,15 +1730,16 @@ bool PhaseSwitch::handleWriteHolding(uint8_t, uint16_t addr, uint16_t value, std
   bool cached = false;
   if (servesFromCache() && _state != State::Unlocking) {
     std::lock_guard<std::mutex> lock(_cacheMutex);
-    // The main loop goes from Delay to Unlocking under this lock; a write
-    // that lost that race goes to the wallbox instead.
-    if (_state != State::Unlocking) {
+    // The main loop goes from Delay to Unlocking, and ends a failed update,
+    // under this lock; a write that lost that race goes to the wallbox.
+    if (servesFromCache() && _state != State::Unlocking) {
       cached = true;
       if (addr < HOLDING_REG_OFFSET || (addr - HOLDING_REG_OFFSET) >= _holdingRegister.size()) {
         buildException(FC_WRITE_HOLDING, EX_ILLEGAL_DATA_ADDRESS, responsePdu);
         return true;
       }
       _holdingRegister[addr - HOLDING_REG_OFFSET] = value;
+      if (addr == HEC_REG_REMOTE_LOCK) _cachedLockWrites++;
       if (addr == HEC_REG_MAX_CURRENT) {
         _cachedCurrentWrites++;
         if (_phaseSwitchRequested) _currentWrittenDuringSwitch = true;
@@ -1743,7 +1791,7 @@ bool PhaseSwitch::handleWriteMultiple(uint8_t, uint16_t addr, uint16_t count, co
   if (servesFromCache() && _state != State::Unlocking) {
     std::lock_guard<std::mutex> lock(_cacheMutex);
     // see handleWriteHolding
-    if (_state != State::Unlocking) {
+    if (servesFromCache() && _state != State::Unlocking) {
       cached = true;
       if (addr < HOLDING_REG_OFFSET || (addr - HOLDING_REG_OFFSET + count) > _holdingRegister.size()) {
         buildException(FC_WRITE_MULTIPLE, EX_ILLEGAL_DATA_ADDRESS, responsePdu);
@@ -1753,6 +1801,7 @@ bool PhaseSwitch::handleWriteMultiple(uint8_t, uint16_t addr, uint16_t count, co
       for (uint16_t i = 0; i < count; i++) {
         _holdingRegister[idx + i] = values[i];
       }
+      if (addr <= HEC_REG_REMOTE_LOCK && HEC_REG_REMOTE_LOCK < addr + count) _cachedLockWrites++;
       if (addr <= HEC_REG_MAX_CURRENT && HEC_REG_MAX_CURRENT < addr + count) {
         _cachedCurrentWrites++;
         if (_phaseSwitchRequested) _currentWrittenDuringSwitch = true;
@@ -1825,11 +1874,10 @@ bool PhaseSwitch::readCachedHolding(uint16_t addr, uint16_t count, std::vector<u
   if (idx + count > _holdingRegister.size()) return false;
 
   values.resize(count);
-  if ((HEC_REG_REMOTE_LOCK - HOLDING_REG_OFFSET) < _holdingRegister.size()) {
-    _holdingRegister[HEC_REG_REMOTE_LOCK - HOLDING_REG_OFFSET] = 1;
-  }
   for (uint16_t i = 0; i < count; i++) {
-    values[i] = _holdingRegister[idx + i];
+    // report the wallbox as unlocked, but keep what evcc wrote in the
+    // cache: a failed update sends that to the wallbox
+    values[i] = addr + i == HEC_REG_REMOTE_LOCK ? 1 : _holdingRegister[idx + i];
   }
   return true;
 }
