@@ -1129,6 +1129,11 @@ def test_web_robustness(b):
             b.esp + "/config", data=f"sd={value}".encode(), method="POST"), timeout=5)
         if "err=sd" not in resp.geturl():
             raise TestFailure(f"switch delay {value!r} was accepted")
+    # a valid delay with an invalid address: nothing may be saved
+    resp = urllib.request.urlopen(urllib.request.Request(
+        b.esp + "/config", data=b"sd=5000&wifimode=static&wifiip=999.1.1.1", method="POST"), timeout=5)
+    if "err=ip" not in resp.geturl():
+        raise TestFailure(f"an invalid WiFi address was accepted: {resp.geturl()}")
     sd_after = re.search(r'name="sd" value="(\d+)"', urllib.request.urlopen(b.esp + "/config", timeout=5).read().decode())
     if not sd_before or not sd_after or sd_before[1] != sd_after[1]:
         raise TestFailure(f"switch delay changed: {sd_before and sd_before[1]} -> {sd_after and sd_after[1]}")
