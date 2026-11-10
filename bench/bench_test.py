@@ -1118,12 +1118,48 @@ def test_web_robustness(b):
         raise TestFailure(f"a stalled form body was not given up with 408: {head!r}")
     with open(os.path.join(REPO, "build", "heidelberg-1p3p.bin"), "rb") as f:
         start = f.read(4096)  # a valid image start, then nothing more
+    # During the upload evcc's writes only reach the cache; after the failed
+    # upload the board must send them to the wallbox. The car charges at the
+    # maximum current, so evcc neither writes a new current (in PV mode it
+    # follows every small change) nor undoes ours: it only checks that
+    # charging is enabled.
+    b.start_charging(pv=20000)
+    b.settle(15)
+    # a value the wallbox does not have yet (register in 0.1 A, sim in A)
+    before = b.sim_state()["max_current"]
+    current = 70 if before == 6.0 else 60
+    def read_holding(register):
+        pdu = struct.pack(">BHH", 3, register, 1)
+        frame = struct.pack(">HHHB", 1, 0, len(pdu) + 1, 1) + pdu
+        with socket.create_connection((b.esp_ip, 502), timeout=5) as conn:
+            conn.sendall(frame)
+            reply = conn.recv(256)
+        if len(reply) < 11 or reply[7] & 0x80:
+            raise TestFailure(f"Modbus read of {register} failed: {reply.hex()}")
+        return struct.unpack(">H", reply[9:11])[0]
+    result = {}
+    def upload():
+        result["head"] = raw_http(b, b"POST /update?name=heidelberg-1p3p.bin HTTP/1.1\r\nHost: x\r\n"
+                                  b"Content-Type: application/octet-stream\r\nContent-Length: 500000\r\n\r\n"
+                                  + start, 60)
     t0 = time.monotonic()
-    head = raw_http(b, b"POST /update?name=heidelberg-1p3p.bin HTTP/1.1\r\nHost: x\r\n"
-                    b"Content-Type: application/octet-stream\r\nContent-Length: 500000\r\n\r\n" + start, 60)
+    thread = threading.Thread(target=upload)
+    thread.start()
+    time.sleep(10)  # past the erase, the upload is stalled now
+    b.esp_write(261, current)
+    b.esp_write(259, 0)  # lock: only reaches the cache during the upload
+    if b.sim_state()["max_current"] != before or b.sim_state()["lock"] != 1:
+        raise TestFailure("a write during the upload reached the wallbox at once")
+    if read_holding(259) != 1:
+        raise TestFailure("the cache does not report the wallbox as unlocked")
+    thread.join()
+    head = result.get("head", "")
     b.note(f"stalled OTA upload: {head.splitlines()[0] if head else 'no answer'} after {time.monotonic() - t0:.0f} s")
     if " 408 " not in head:
         raise TestFailure(f"a stalled OTA upload was not aborted: {head!r}")
+    b.wait(lambda: b.sim_state()["max_current"] == current / 10 and b.sim_state()["lock"] == 0, 5,
+           f"the current ({current / 10} A) and the lock written during the upload reach the wallbox")
+    b.esp_write(259, 1)  # unlock again, evcc would do it on the next status 10
     for value in ("abc", "-1", "500", "700000"):
         resp = urllib.request.urlopen(urllib.request.Request(
             b.esp + "/config", data=f"sd={value}".encode(), method="POST"), timeout=5)
@@ -1140,7 +1176,9 @@ def test_web_robustness(b):
     b.wait_esp_running(30)
     if any("start:" in e for e in b.events_since_mark()):
         raise TestFailure("the board restarted")
-    b.check_log()
+    # evcc did not write that current itself and sets its own again; if it
+    # reads the lock before the test unlocks, it unlocks and reports status 10
+    b.check_log(allowed=[r"charger out of sync", r"invalid status: 10"])
 
 
 def test_silent_during_switch(b):
