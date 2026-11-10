@@ -125,25 +125,46 @@ static bool hasParam(const std::vector<KeyValue> &params, const char *key)
   return false;
 }
 
-static std::string readBody(httpd_req_t *req)
+// Our forms are far below this; a bigger body would only exhaust the heap,
+// and without exceptions a failed allocation aborts.
+static constexpr size_t MAX_FORM_BODY = 4096;
+// httpd_req_recv() waits 5 s per call (recv_wait_timeout)
+static constexpr int MAX_FORM_RECV_TIMEOUTS = 2;
+
+// Reads a form body. On a body that is too large or does not arrive, it
+// answers the request itself and returns false; the handler then returns
+// ESP_FAIL, which closes the connection. Otherwise the web server would
+// still read and discard the rest of the body. A client still sending a
+// large body may see a connection reset instead of the 413 (lwIP resets a
+// connection closed with unread data); no real form comes near 4 kB.
+static bool readForm(httpd_req_t *req, std::vector<KeyValue> &params)
 {
+  if (req->content_len > MAX_FORM_BODY) {
+    httpd_resp_set_status(req, "413 Payload Too Large");
+    httpd_resp_send(req, "Request too large", HTTPD_RESP_USE_STRLEN);
+    return false;
+  }
   std::string body;
   int remaining = req->content_len;
-  body.reserve(remaining > 0 ? remaining : 0);
+  body.reserve(remaining);
   char buf[256];
+  int timeouts = 0;
   while (remaining > 0) {
     int chunk = remaining < (int)sizeof(buf) ? remaining : (int)sizeof(buf);
     int r = httpd_req_recv(req, buf, chunk);
-    if (r == HTTPD_SOCK_ERR_TIMEOUT) {
+    if (r == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts <= MAX_FORM_RECV_TIMEOUTS) {
       continue;
     }
     if (r <= 0) {
-      break;
+      httpd_resp_send_err(req, HTTPD_408_REQ_TIMEOUT, "Request body incomplete");
+      return false;
     }
+    timeouts = 0;
     body.append(buf, (size_t)r);
     remaining -= r;
   }
-  return body;
+  params = parseWwwForm(body);
+  return true;
 }
 
 static std::vector<KeyValue> readQueryParams(httpd_req_t *req)
@@ -618,7 +639,8 @@ static esp_err_t handleConfigGet(httpd_req_t *req)
 static esp_err_t handleConfigPost(httpd_req_t *req)
 {
   dbgln("[webserver] POST /config");
-  auto params = parseWwwForm(readBody(req));
+  std::vector<KeyValue> params;
+  if (!readForm(req, params)) return ESP_FAIL; // closes the connection
 
   if (hasParam(params, "sd")) {
     uint32_t delay = (uint32_t)strtoul(findParam(params, "sd").c_str(), nullptr, 10);
@@ -745,7 +767,8 @@ static esp_err_t handleDebugGet(httpd_req_t *req)
 static esp_err_t handleDebugPost(httpd_req_t *req)
 {
   dbgln("[webserver] POST /debug");
-  auto params = parseWwwForm(readBody(req));
+  std::vector<KeyValue> params;
+  if (!readForm(req, params)) return ESP_FAIL; // closes the connection
   std::string slaveId = findParam(params, "slave", "1");
   std::string reg = findParam(params, "reg", "1");
   std::string func = findParam(params, "func", "3");
@@ -964,7 +987,8 @@ static esp_err_t handleWifiScanGet(httpd_req_t *req)
 static esp_err_t handleWifiSetupPost(httpd_req_t *req)
 {
   dbgln("[webserver] POST /wifi-setup");
-  auto params = parseWwwForm(readBody(req));
+  std::vector<KeyValue> params;
+  if (!readForm(req, params)) return ESP_FAIL; // closes the connection
   std::string ssid = findParam(params, "ssid");
   std::string pass = findParam(params, "pass");
   auto first = ssid.find_first_not_of(" \t\r\n");
