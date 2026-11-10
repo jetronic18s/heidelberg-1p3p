@@ -6,6 +6,7 @@
 > - Firmware komplett auf **natives ESP-IDF** (5.5.6) umgestellt, ohne Arduino/PlatformIO
 > - **LAN (Ethernet)** auf dem Dingtian DT-R002 funktioniert, mit automatischem Wechsel auf WLAN bei Ausfall
 > - Update per **OTA**, Releases mit Versionsnummer, [Fehlercodes](#fehlercodes) für Sicherheitsabschaltungen
+> - Unterstützt wird nur das **Dingtian DT-R002** (ESP32 mit Relais, RS485 und LAN); die Firmware wird nur für dieses Board gebaut und getestet
 >
 > Für die Phasenumschaltung braucht evcc weiterhin einen Patch, in das offizielle evcc wird er voraussichtlich nicht übernommen: [modifizierte evcc Version](https://github.com/jetronic18s/evcc/tree/heidelberg-1p3p-0.318.1), Branch `heidelberg-1p3p-0.318.1`. Das ist evcc 0.318.1 mit dem Patch von [zivillian](https://github.com/zivillian/evcc) und zusätzlich dem Auslesen der Phasen vom ESP32 ([PR an zivillian](https://github.com/zivillian/evcc/pull/1)).
 
