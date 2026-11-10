@@ -1143,6 +1143,45 @@ def test_web_robustness(b):
     b.check_log()
 
 
+def test_silent_during_switch(b):
+    """Wallbox silent before a phase switch: the switch is given up, no fault, contactors untouched"""
+    b.start_charging(pv=7000, phases=3)
+    cuts = b.sim_state()["cuts_under_load"]
+    def switch_status():
+        match = re.search(r"Phase switches:? = (\d+) since power-on(, last \dp to \dp)?", b.esp_status_page())
+        if not match:
+            raise TestFailure("no phase switch count on the status page")
+        return match.group(1), match.group(2)
+    switches = switch_status()
+    b.mark_events()
+    b.mark_log()
+    b.sim("silent on")
+    try:
+        urllib.request.urlopen(urllib.request.Request(b.esp + "/1p", method="POST"), timeout=5).read()
+        b.note("switch to 1p requested on the web page while the wallbox is silent")
+        b.wait(lambda: any("given up" in e for e in b.events_since_mark()), 120,
+               "event: phase switch given up")
+        if b.esp_fault():
+            raise TestFailure(f"unexpected safety fault {b.esp_fault()}")
+        if b.sim_state()["powered_phases"] != 3:
+            raise TestFailure("the contactors were switched although the wallbox did not answer")
+        if switch_status() != switches:
+            raise TestFailure(f"the given up switch counts as a switch: {switches} -> {switch_status()}")
+    finally:
+        b.sim("silent off")
+    b.wait(lambda: "wallbox not responding" not in (b.esp_text() or "x"), 30,
+           "board reports the wallbox back")
+    b.wait(lambda: b.charging(3), 180, "evcc charging again on 3p")
+    if b.sim_state()["cuts_under_load"] != cuts:
+        raise TestFailure("the contactors opened while current flowed")
+    b.expect_events(r"wallbox not responding", r"phase switch 3p to 1p \(web page\) given up",
+                    r"wallbox answers again after")
+    # the web page switched past evcc: while the switch ran, register 4
+    # reported 1p, so evcc warns about the phases like in test 27
+    b.check_log(allowed=[r"exception '4'", r"exception '11'", r"i/o timeout",
+                         r"charger out of sync", r"phases mismatch"])
+
+
 TESTS = [
     test_boot, test_pv_charging, test_auto_1p, test_auto_3p, test_manual_switch,
     test_current_after_switch, test_switch_without_evcc, test_switch_while_disabled,
@@ -1153,6 +1192,7 @@ TESTS = [
     test_disable_after_switch, test_busy_bridge, test_parallel_requests,
     test_write_multiple_phases, test_concurrent_rtu_and_status, test_clear_event_log,
     test_charge_pause, test_restart_during_switch, test_web_robustness,
+    test_silent_during_switch,
 ]
 
 # tests that end in a safety fault on purpose
