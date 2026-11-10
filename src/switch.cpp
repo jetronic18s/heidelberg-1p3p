@@ -165,6 +165,8 @@ PhaseSwitch::PhaseSwitch()
   ,_serverId(1)
   ,_listenFd(-1)
   ,_tcpServerStarted(false)
+  ,_tcpBridgeWanted(false)
+  ,_tcpBridgeLastTryMs(0)
   ,_rtuMessageCount(0)
   ,_rtuPendingRequestCount(0)
   ,_rtuErrorCount(0)
@@ -513,7 +515,9 @@ void PhaseSwitch::loop(){
   }
 
   if (!_tcpServerStarted) {
-      return;
+    // the bridge task could not be created: try again
+    if (_tcpBridgeWanted && nowMs() - _tcpBridgeLastTryMs >= 5000) startTcpBridge();
+    return;
   }
 
   const bool oneFeedback = (readPin(PIN_1P_IN) == 1);
@@ -1343,6 +1347,8 @@ void PhaseSwitch::startTcpBridge()
   if (_tcpServerStarted) {
     return;
   }
+  _tcpBridgeWanted = true;
+  _tcpBridgeLastTryMs = nowMs();
   BaseType_t ok = xTaskCreate(
       [](void *arg) { static_cast<PhaseSwitch *>(arg)->tcpBridgeTask(); },
       "modbus_tcp_bridge",
@@ -1352,46 +1358,46 @@ void PhaseSwitch::startTcpBridge()
       &_tcpTaskHandle);
   if (ok != pdPASS) {
     _bridgeErrorCount++;
-    ESP_LOGE(TAG, "failed to create Modbus TCP bridge task");
+    ESP_LOGE(TAG, "failed to create Modbus TCP bridge task, trying again in 5 s");
     return;
   }
   _tcpServerStarted = true;
 }
 
-void PhaseSwitch::tcpBridgeTask()
+// The listening socket for the bridge, -1 on failure.
+static int openListenSocket()
 {
-  _listenFd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
-  if (_listenFd < 0) {
-    _bridgeErrorCount++;
+  const int fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+  if (fd < 0) {
     ESP_LOGE(TAG, "socket() failed: errno=%d", errno);
-    vTaskDelete(nullptr);
-    return;
+    return -1;
   }
-
   int yes = 1;
-  setsockopt(_listenFd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-
+  setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
   sockaddr_in addr = {};
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = htonl(INADDR_ANY);
   addr.sin_port = htons(MODBUS_TCP_PORT);
-
-  if (bind(_listenFd, (sockaddr *)&addr, sizeof(addr)) != 0) {
-    _bridgeErrorCount++;
+  if (bind(fd, (sockaddr *)&addr, sizeof(addr)) != 0) {
     ESP_LOGE(TAG, "bind(%u) failed: errno=%d", MODBUS_TCP_PORT, errno);
-    close(_listenFd);
-    _listenFd = -1;
-    vTaskDelete(nullptr);
-    return;
+    close(fd);
+    return -1;
   }
-
-  if (listen(_listenFd, 5) != 0) {
-    _bridgeErrorCount++;
+  if (listen(fd, 5) != 0) {
     ESP_LOGE(TAG, "listen() failed: errno=%d", errno);
-    close(_listenFd);
-    _listenFd = -1;
-    vTaskDelete(nullptr);
-    return;
+    close(fd);
+    return -1;
+  }
+  return fd;
+}
+
+void PhaseSwitch::tcpBridgeTask()
+{
+  // Without the bridge evcc cannot reach the wallbox: keep trying instead
+  // of giving up silently, e.g. while all sockets are taken.
+  while ((_listenFd = openListenSocket()) < 0) {
+    _bridgeErrorCount++;
+    vTaskDelay(pdMS_TO_TICKS(5000));
   }
 
   ESP_LOGI(TAG, "Modbus TCP bridge listening on port %u", MODBUS_TCP_PORT);
@@ -1401,8 +1407,19 @@ void PhaseSwitch::tcpBridgeTask()
     socklen_t remoteLen = sizeof(remote);
     int clientFd = accept(_listenFd, (sockaddr *)&remote, &remoteLen);
     if (clientFd < 0) {
-      if (errno != EINTR) {
-        _bridgeErrorCount++;
+      if (errno == EINTR) continue;
+      _bridgeErrorCount++;
+      ESP_LOGW(TAG, "accept() failed: errno=%d", errno);
+      if (errno == EBADF || errno == EINVAL) {
+        // the listening socket itself is broken: open a new one
+        close(_listenFd);
+        while ((_listenFd = openListenSocket()) < 0) {
+          _bridgeErrorCount++;
+          vTaskDelay(pdMS_TO_TICKS(5000));
+        }
+      } else {
+        // e.g. no free socket: do not spin at priority 8
+        vTaskDelay(pdMS_TO_TICKS(100));
       }
       continue;
     }
