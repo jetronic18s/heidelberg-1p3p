@@ -116,9 +116,10 @@ bench/start.sh --background   # background
 bench/start.sh --stop         # stop a background run
 ```
 
-`start.sh` waits until the simulated wallbox answers before it starts evcc:
-evcc gives up on a charger whose first Modbus writes fail and retries only
-after 15 minutes.
+`start.sh` waits until the simulated wallbox answers and the board is
+Running before it starts evcc: evcc gives up on a charger whose first Modbus
+writes fail and retries only after 15 minutes. A board in a safety fault
+(e.g. `0xE104` after a night without the simulator) is rebooted once.
 
 - evcc UI: http://127.0.0.1:7071 (no login)
 - simulator commands: `echo <command> | nc -q1 localhost 8502`

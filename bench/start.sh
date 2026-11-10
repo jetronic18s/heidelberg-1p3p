@@ -112,6 +112,26 @@ run() {
     sleep 1
   done
 
+  # The board must be Running too: a board in a safety fault (e.g. 0xE104
+  # after a night without the simulator) answers evcc with exception 11, and
+  # evcc again gives up for 15 minutes. A reboot clears the fault.
+  echo "waiting for the board at $ESP_IP..."
+  local state="" rebooted=""
+  for _ in $(seq 120); do
+    # empty while the board restarts: set -e must not end the script then
+    state="$(curl -s -m3 "http://$ESP_IP/" | grep -o -E '[13~]P [A-Za-z]+( \[0x[0-9A-F]+\])?' | head -1 || true)"
+    [[ "$state" == *Running* ]] && break
+    if [[ "$state" == *Fault* && -z "$rebooted" ]]; then
+      echo "board in $state, rebooting it"
+      curl -s -m5 -X POST "http://$ESP_IP/reboot" > /dev/null
+      rebooted=1
+    fi
+    sleep 1
+  done
+  if [[ "$state" != *Running* ]]; then
+    echo "warning: board not Running (${state:-not reachable}); evcc may give up for 15 minutes" >&2
+  fi
+
   echo "evcc UI: http://127.0.0.1:$EVCC_PORT, log: $BENCH_DIR/evcc.log"
   "$BENCH_DIR/evcc" --config "$BENCH_DIR/evcc.yaml" --database "$BENCH_DIR/evcc.db" \
     --disable-auth --disable-onboarding >> "$BENCH_DIR/evcc.log" 2>&1 &
