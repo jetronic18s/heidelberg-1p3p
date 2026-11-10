@@ -1,4 +1,5 @@
 #include "switch.h"
+#include "cycle_counter.h"
 #include "event_log.h"
 #include <algorithm>
 #include <cstdio>
@@ -531,6 +532,7 @@ void PhaseSwitch::loop(){
       ESP_LOGI(TAG, "switching on 1p");
       writePin(PIN_1P_OUT, RELAY_ON);
     }
+    cycleCounterContactorOn(_desiredPhases);
     _switchOnDeadlineMs = now + SWITCH_POWER_ON_SETTLE_MS + SWITCH_CONFIRM_TIMEOUT_MS;
     _wallboxResponseDeadlineMs = now + WALLBOX_RESPONSE_TIMEOUT_MS;
     _previous = now;
@@ -971,6 +973,7 @@ void PhaseSwitch::finishSwitchStats(){
   _lastSwitchDoneMs = done;
   _switchStartMs = 0;
   eventLog(EventType::PhaseSwitch, _lastSwitchFrom, _lastSwitchTo, _switchSource, _lastSwitchMs);
+  cycleCounterPhaseSwitch();
 }
 
 std::string PhaseSwitch::switchStatusText(){

@@ -5,6 +5,7 @@ file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
 set(MAIN_SRCS
     "${SRC_DIR}/config.cpp"
+    "${SRC_DIR}/cycle_counter.cpp"
     "${SRC_DIR}/debug.cpp"
     "${SRC_DIR}/ethernet_jl1101.cpp"
     "${SRC_DIR}/event_log.cpp"

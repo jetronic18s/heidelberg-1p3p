@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <vector>
 
+#include "cycle_counter.h"
 #include "event_log.h"
 #include "time_sync.h"
 #include "wifi_native.h"
@@ -419,6 +420,7 @@ static esp_err_t handleStatusGet(httpd_req_t *req)
   }
   sendTableRow(body, "Phase switches", s_phase_switch->switchStatusText());
   sendTableRow(body, "Contactors", s_phase_switch->contactorText());
+  sendTableRow(body, "Contactor cycles", cycleCounterText());
 
   sendTableSection(body, "evcc (Modbus TCP)");
   sendTableRow(body, "evcc", s_phase_switch->evccStatusText());

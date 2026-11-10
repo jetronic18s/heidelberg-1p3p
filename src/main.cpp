@@ -1,5 +1,6 @@
 #include "main.h"
 #include "ethernet_jl1101.h"
+#include "cycle_counter.h"
 #include "event_log.h"
 #include "time_sync.h"
 #include "driver/gpio.h"
@@ -365,6 +366,7 @@ extern "C" void app_main(void)
     
     ESP_LOGI(TAG, "Config load...");
     config.begin();
+    cycleCounterInit();
     eventLogInit();
     eventLog(EventType::Start, (uint8_t)esp_reset_reason());
     
