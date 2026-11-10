@@ -141,6 +141,8 @@ Die Heidelberg hat einen Watchdog: Kommt für die Zeit aus Register 257 (Standar
 
 Ein Neustart von evcc, der länger als 15 s dauert, unterbricht das Laden deshalb kurz.
 
+Als evcc zählt der Modbus-Client, der zuletzt geschrieben hat (erkannt an seiner IP-Adresse). Ein zweiter Client, der nur liest, etwa Home Assistant, hält den Watchdog deshalb nicht am Leben, wenn evcc ausfällt. Solange noch kein Client geschrieben hat, zählt jede Anfrage.
+
 ### Wallbox antwortet nicht
 
 Antwortet die Wallbox im Betrieb 60 s lang nicht mehr (z. B. RS485-Kabel gelöst), zeigen Startseite (`[wallbox not responding]`) und Statusseite (Zeile `Wallbox`) das an, und evcc bekommt die Modbus-Meldung „gateway target device failed to respond“. Das Laden hat die Wallbox zu diesem Zeitpunkt über ihren eigenen Watchdog schon gestoppt. Sobald sie wieder antwortet, läuft alles ohne Neustart weiter. Es ist kein Fehlerzustand, der einen Reboot braucht.

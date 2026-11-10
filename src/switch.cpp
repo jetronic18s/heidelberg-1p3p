@@ -214,6 +214,7 @@ PhaseSwitch::PhaseSwitch()
   ,_lastRefusedLogMs(0)
   ,_carQuietUntilMs(0)
   ,_lastClientAddr(0)
+  ,_controllerAddr(0)
   ,_restartDeadlineMs(0)
   ,_restartStopWritten(false)
   ,_bothFeedbackSinceMs(0)
@@ -1412,6 +1413,10 @@ void PhaseSwitch::handleTcpClient(int clientFd)
   tv.tv_sec = MODBUS_TCP_CLIENT_TIMEOUT_SEC;
   setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
   setsockopt(clientFd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+  sockaddr_in peer = {};
+  socklen_t peerLen = sizeof(peer);
+  const uint32_t clientAddr = getpeername(clientFd, (sockaddr *)&peer, &peerLen) == 0
+    ? peer.sin_addr.s_addr : 0;
 
   while (true) {
     uint8_t header[7];
@@ -1435,7 +1440,7 @@ void PhaseSwitch::handleTcpClient(int clientFd)
     }
 
     std::vector<uint8_t> responsePdu;
-    if (!handleModbusRequest(unitId, pdu.data(), pdu.size(), responsePdu)) {
+    if (!handleModbusRequest(clientAddr, unitId, pdu.data(), pdu.size(), responsePdu)) {
       _bridgeErrorCount++;
       return;
     }
@@ -1456,7 +1461,7 @@ void PhaseSwitch::handleTcpClient(int clientFd)
   }
 }
 
-bool PhaseSwitch::handleModbusRequest(uint8_t unitId, const uint8_t* pdu, size_t pduLen, std::vector<uint8_t>& responsePdu)
+bool PhaseSwitch::handleModbusRequest(uint32_t clientAddr, uint8_t unitId, const uint8_t* pdu, size_t pduLen, std::vector<uint8_t>& responsePdu)
 {
   if (!pdu || pduLen < 1) {
     return false;
@@ -1468,7 +1473,14 @@ bool PhaseSwitch::handleModbusRequest(uint8_t unitId, const uint8_t* pdu, size_t
     return true;
   }
 
-  {
+  // Only the controlling client feeds the evcc watchdog: the one that wrote
+  // last. A second client that only reads (a dashboard, Home Assistant) must
+  // not keep it alive when evcc is gone. Until anyone has written, every
+  // client counts.
+  const bool isWrite = fc == FC_WRITE_HOLDING || fc == FC_WRITE_MULTIPLE;
+  const uint32_t controller = _controllerAddr;
+  if (isWrite) _controllerAddr = clientAddr;
+  if (isWrite || controller == 0 || controller == clientAddr) {
     std::lock_guard<std::mutex> lock(_evccMutex);
     const uint32_t silentMs = msSince(_lastBridgeRequestMs);
     _lastBridgeRequestMs = nowMs();

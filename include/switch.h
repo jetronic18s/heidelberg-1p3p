@@ -149,6 +149,7 @@
             std::atomic<uint32_t> _lastRefusedLogMs;
             uint32_t _carQuietUntilMs; // see logCarState()
             std::atomic<uint32_t> _lastClientAddr; // last Modbus TCP client, network order
+            std::atomic<uint32_t> _controllerAddr; // client that wrote last, feeds the evcc watchdog
             uint32_t _restartDeadlineMs;
             bool _restartStopWritten;
             uint32_t _bothFeedbackSinceMs;    // debounce, main loop only
@@ -183,7 +184,7 @@
             void startTcpBridge();
             void tcpBridgeTask();
             void handleTcpClient(int clientFd);
-            bool handleModbusRequest(uint8_t unitId, const uint8_t* pdu, size_t pduLen, std::vector<uint8_t>& responsePdu);
+            bool handleModbusRequest(uint32_t clientAddr, uint8_t unitId, const uint8_t* pdu, size_t pduLen, std::vector<uint8_t>& responsePdu);
             bool handleReadHolding(uint8_t unitId, uint16_t addr, uint16_t count, std::vector<uint8_t>& responsePdu);
             bool handleReadInput(uint8_t unitId, uint16_t addr, uint16_t count, std::vector<uint8_t>& responsePdu);
             bool handleWriteHolding(uint8_t unitId, uint16_t addr, uint16_t value, std::vector<uint8_t>& responsePdu);
