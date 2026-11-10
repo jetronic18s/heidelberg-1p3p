@@ -331,6 +331,14 @@ static void sendTableRow(std::string &response, const char *name, uint16_t value
   sendTableRow(response, name, (uint32_t)value);
 }
 
+// "8962.3 kWh (8962256 Wh)": the rounded value to read, the exact counter to compare
+static void sendEnergyRow(std::string &response, const char *name, uint32_t wh)
+{
+  const uint32_t tenthKwh = (wh + 50) / 100;
+  appendf(response, "<tr><td>%s:</td><td>%lu.%lu kWh (%lu Wh)</td></tr>", name,
+          (unsigned long)(tenthKwh / 10), (unsigned long)(tenthKwh % 10), (unsigned long)wh);
+}
+
 static void sendDebugForm(std::string &response, const std::string &slaveId, const std::string &reg, const std::string &function, const std::string &count)
 {
   response += "<form method=\"post\"><table>";
@@ -436,8 +444,8 @@ static esp_err_t handleStatusGet(httpd_req_t *req)
   sendTableRow(body, "Voltage L2 (V)", s_phase_switch->getInputRegister(11));
   sendTableRow(body, "Voltage L3 (V)", s_phase_switch->getInputRegister(12));
   sendTableRow(body, "Power (VA)", s_phase_switch->getInputRegister(14));
-  sendTableRow(body, "Energy since PowerOn (Wh)", (uint32_t)((uint32_t)s_phase_switch->getInputRegister(15) << 16 | s_phase_switch->getInputRegister(16)));
-  sendTableRow(body, "Energy since Installation (Wh)", (uint32_t)((uint32_t)s_phase_switch->getInputRegister(17) << 16 | s_phase_switch->getInputRegister(18)));
+  sendEnergyRow(body, "Energy since PowerOn", (uint32_t)s_phase_switch->getInputRegister(15) << 16 | s_phase_switch->getInputRegister(16));
+  sendEnergyRow(body, "Energy since Installation", (uint32_t)s_phase_switch->getInputRegister(17) << 16 | s_phase_switch->getInputRegister(18));
   sendTableRow(body, "PCB-Temperatur (C)", s_phase_switch->getInputRegister(9) * 0.1f);
   sendTableRow(body, "extern lock state", s_phase_switch->getInputRegister(13) == 0 ? "locked" : "unlocked");
   char regLayout[16];
