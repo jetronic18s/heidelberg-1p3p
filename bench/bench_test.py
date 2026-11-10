@@ -755,10 +755,14 @@ def test_dead_wallbox(b):
     b.sim("car off")
     b.sim("silent on")
     b.mark_events()
+    b.mark_log()
     try:
         b.esp_reboot()
         b.wait(lambda: b.esp_fault() == "0xE104", 150, "safety fault 0xE104")
         b.expect_events(r"safety fault 0xE104")
+        # evcc sees the fault as charger status 11 (error)
+        b.wait(lambda: any("invalid status: 11" in line for line in b.log_since_mark()), 60,
+               "evcc reports invalid status 11")
     finally:
         b.sim("silent off")
     b.esp_reboot()
