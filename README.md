@@ -149,7 +149,7 @@ Antwortet die Wallbox im Betrieb 60 s lang nicht mehr (z. B. RS485-Kabel gelöst
 
 ## Fehlercodes
 
-Erkennt der ESP einen Sicherheitsfehler, schaltet er beide Schütze ab und geht in den Zustand `Fault`. Die Statusseite zeigt dann `Safety Fault Code` und `Safety Fault`. Der Fehler bleibt bis zum nächsten Neustart des ESP bestehen.
+Erkennt der ESP einen Sicherheitsfehler, schaltet er beide Schütze ab und geht in den Zustand `Fault`. Die Statusseite zeigt dann `Safety Fault Code` und `Safety Fault`, das Ereignisprotokoll den Fehler mit Uhrzeit. evcc zeigt beim Ladepunkt den Fehler `invalid status: 11` (11 ist „Error“ in der Registerbeschreibung der Heidelberg); die Ursache steht nur auf der Statusseite. Der Fehler bleibt bis zum nächsten Neustart des ESP bestehen.
 
 | Code | Bedeutung | Prüfen |
 | ---- | --------- | ------ |

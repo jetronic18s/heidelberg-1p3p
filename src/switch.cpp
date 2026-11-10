@@ -56,6 +56,8 @@ static bool persistsFor(bool condition, uint32_t &sinceMs, uint32_t durationMs)
 }
 
 static constexpr uint16_t SAFETY_FAULT_NONE = 0x0000;
+// register 5 "Error" in the Heidelberg register map
+static constexpr uint16_t HEC_STATUS_ERROR = 11;
 static constexpr uint16_t SAFETY_FAULT_FEEDBACK_BOTH_ACTIVE = 0xE101;
 static constexpr uint16_t SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT = 0xE102;
 static constexpr uint16_t SAFETY_FAULT_RUNNING_FEEDBACK_INVALID = 0xE103;
@@ -1679,6 +1681,13 @@ bool PhaseSwitch::handleReadHolding(uint8_t, uint16_t addr, uint16_t count, std:
 
 bool PhaseSwitch::handleReadInput(uint8_t, uint16_t addr, uint16_t count, std::vector<uint8_t>& responsePdu)
 {
+  // A safety fault right after power-on, before there is a cache: evcc's
+  // status read still gets 11 (see readCachedInput).
+  if (hasSafetyFault() && addr == 5 && count == 1 && !servesFromCache()) {
+    const uint16_t status = HEC_STATUS_ERROR;
+    buildReadResponse(FC_READ_INPUT, &status, 1, responsePdu);
+    return true;
+  }
   if (waitingForWallbox()) {
     buildException(FC_READ_INPUT, EX_GATEWAY_TARGET_FAILED, responsePdu);
     return true;
@@ -1703,6 +1712,8 @@ bool PhaseSwitch::handleReadInput(uint8_t, uint16_t addr, uint16_t count, std::v
     return true;
   }
   cacheInput(addr, values.data(), count);
+  // a fault before the cache was valid: the wallbox may still be powered
+  if (hasSafetyFault() && addr <= 5 && 5 < addr + count) values[5 - addr] = HEC_STATUS_ERROR;
   buildReadResponse(FC_READ_INPUT, values.data(), count, responsePdu);
   return true;
 }
@@ -1900,7 +1911,10 @@ bool PhaseSwitch::readCachedInput(uint16_t addr, uint16_t count, std::vector<uin
     uint16_t reg = addr + i;
     switch (reg) {
       case 5:
-        values[i] = _reportedStatus; // A1 or B1: not charging, car as before the interruption.
+        // A safety fault shows in evcc as "invalid status: 11" (11 = error in
+        // the Heidelberg register map). Otherwise A1 or B1: not charging,
+        // car as before the interruption.
+        values[i] = hasSafetyFault() ? HEC_STATUS_ERROR : _reportedStatus;
         break;
       case 6: case 7: case 8:    // L1-L3 current
       case 10: case 11: case 12: // L1-L3 voltage
