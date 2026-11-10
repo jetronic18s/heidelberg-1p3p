@@ -384,6 +384,18 @@ static void sendTableSection(std::string &response, const char *title)
   appendf(response, "<tr><td colspan=\"2\"><p></p><b>%s</b></td></tr>", title);
 }
 
+// "app0 1280 kB (running), app1 1280 kB": an older partition table has
+// smaller slots, which limits the firmware size for OTA
+static std::string firmwareSlotsText()
+{
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  const esp_partition_t *next = esp_ota_get_next_update_partition(nullptr);
+  std::string text;
+  if (running) text += std::string(running->label) + " " + std::to_string(running->size / 1024) + " kB (running)";
+  if (next) text += std::string(text.empty() ? "" : ", ") + next->label + " " + std::to_string(next->size / 1024) + " kB";
+  return text;
+}
+
 static const char *resetReasonText(esp_reset_reason_t reason)
 {
   switch (reason) {
@@ -481,6 +493,7 @@ static esp_err_t handleStatusGet(httpd_req_t *req)
   std::string restart = resetReasonText(esp_reset_reason());
   if (s_phase_switch->bootCacheRestored()) restart += ", register cache restored";
   sendTableRow(body, "Last restart", restart);
+  sendTableRow(body, "Firmware slots", firmwareSlotsText());
   char heap[48];
   snprintf(heap, sizeof(heap), "%u kB free, minimum %u kB",
            (unsigned)(esp_get_free_heap_size() / 1024), (unsigned)(esp_get_minimum_free_heap_size() / 1024));
@@ -756,6 +769,15 @@ static esp_err_t handleUpdatePost(httpd_req_t *req)
     sendText(req, "400 Bad Request", "OTA could not begin");
     return ESP_OK;
   }
+  // Boards with an older partition table have smaller slots; refuse before
+  // erasing anything.
+  if (req->content_len > updatePartition->size) {
+    char text[96];
+    snprintf(text, sizeof(text), "OTA image too large: %u kB, update slot %s has %u kB",
+             (unsigned)(req->content_len / 1024), updatePartition->label, (unsigned)(updatePartition->size / 1024));
+    sendText(req, "400 Bad Request", text);
+    return ESP_OK;
+  }
   // Erasing the partition in esp_ota_begin() already stalls Modbus RTU.
   // The upload either ends in a restart or fails; on failure evcc is served
   // by the wallbox again.
@@ -783,9 +805,11 @@ static esp_err_t handleUpdatePost(httpd_req_t *req)
       sendText(req, "400 Bad Request", "OTA read failed");
       return ESP_OK;
     }
-    if (esp_ota_write(otaHandle, buf, (size_t)r) != ESP_OK) {
+    const esp_err_t err = esp_ota_write(otaHandle, buf, (size_t)r);
+    if (err != ESP_OK) {
       esp_ota_abort(otaHandle);
-      sendText(req, "400 Bad Request", "OTA could not write data");
+      std::string text = std::string("OTA could not write data: ") + esp_err_to_name(err);
+      sendText(req, "400 Bad Request", text.c_str());
       return ESP_OK;
     }
     remaining -= r;
