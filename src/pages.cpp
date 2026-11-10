@@ -1116,6 +1116,9 @@ void setupPages(PhaseSwitch *phaseSwitch, Config *config)
   serverConfig.server_port = 80;
   serverConfig.max_uri_handlers = 24;
   serverConfig.stack_size = 12288;
+  // Idle keep-alive connections from open browser tabs must not lock out
+  // new ones: when all sockets are taken, the oldest one is closed.
+  serverConfig.lru_purge_enable = true;
 
   if (httpd_start(&s_server, &serverConfig) != ESP_OK) {
     dbgln("[webserver] httpd_start failed");
