@@ -44,7 +44,7 @@ import urllib.request
 import serial
 
 LAYOUT_VERSION = 0x108
-STATUS_A1, STATUS_B1, STATUS_B2, STATUS_C2, STATUS_LOCKED = 2, 4, 5, 7, 10
+STATUS_A1, STATUS_B1, STATUS_B2, STATUS_C1, STATUS_C2, STATUS_LOCKED = 2, 4, 5, 6, 7, 10
 MIN_CURRENT = 60  # 0.1 A
 INPUT_REGS = list(range(0, 20)) + [100, 101, 200, 203]
 HOLDING_REGS = range(256, 266)
@@ -72,6 +72,7 @@ class Wallbox:
         self.args = args
         self.lock = threading.Lock()
         self.car = args.car
+        self.car_waits = False  # car asks for current at 0 A: C1 instead of B
         self.silent = False
         self.forced_phases = None if args.esp_url else 1
         self.esp_phases = 0
@@ -165,6 +166,8 @@ class Wallbox:
             return STATUS_A1
         if self.charging(now):
             return STATUS_C2
+        if self.car_waits:
+            return STATUS_C1
         return STATUS_B2 if self.charge_allowed_at is not None else STATUS_B1
 
     def currents(self, now):
@@ -296,6 +299,9 @@ class Wallbox:
             if words[:1] == ["car"] and words[1:] in (["on"], ["off"]):
                 self.car = words[1] == "on"
                 log(f"car {'connected' if self.car else 'disconnected'}")
+            elif words[:1] == ["wait"] and words[1:] in (["on"], ["off"]):
+                self.car_waits = words[1] == "on"
+                log(f"car waits for current in C1: {words[1]}")
             elif words[:1] == ["silent"] and words[1:] in (["on"], ["off"]):
                 self.silent = words[1] == "on"
                 log(f"silent {words[1]}")

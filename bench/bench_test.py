@@ -1029,6 +1029,38 @@ def test_clear_event_log(b):
     b.check_log(allowed=ALLOWED_ON_RESTART)
 
 
+def test_charge_pause(b):
+    """Charge pause: the car waits in C1 without PV, the log shows pause, resume and the total"""
+    b.sim("wait on")
+    try:
+        b.start_charging(pv=7000)
+        # the board polls the wallbox every 2 s: let it log the start first
+        b.wait(lambda: any("charging started" in e for e in b.esp_events()[:3]), 15,
+               "event: charging started")
+        b.mark_log()
+        b.mark_events()
+        b.sim("pv 0")
+        b.wait(lambda: any("charging paused" in e for e in b.events_since_mark()), 300,
+               "event: charging paused")
+        if b.sim_state()["status"] != 6:
+            raise TestFailure(f"the simulated car is not in C1: status {b.sim_state()['status']}")
+        b.sim("pv 7000")
+        b.wait(lambda: b.charging(), 240, "evcc charging again")
+        b.wait(lambda: any("charging resumed" in e for e in b.events_since_mark()), 30,
+               "event: charging resumed")
+        b.sim("car off")
+        b.wait(lambda: not b.lp()["connected"], 30, "evcc: car disconnected")
+        b.settle(5)
+        b.expect_events(r"charging stopped, [\d.]+ kWh", r"car disconnected")
+        if any("charging started" in e for e in b.events_since_mark()):
+            raise TestFailure("the pause ended the charge: a new charge was started")
+        # evcc maps C1 to "charging" and warns while it has paused the charge;
+        # a real car waiting in C1 does the same, it is no fault of the board
+        b.check_log(allowed=[r"charger logic error: disabled but charging"])
+    finally:
+        b.sim("wait off")
+
+
 TESTS = [
     test_boot, test_pv_charging, test_auto_1p, test_auto_3p, test_manual_switch,
     test_current_after_switch, test_switch_without_evcc, test_switch_while_disabled,
@@ -1038,6 +1070,7 @@ TESTS = [
     test_dead_wallbox, test_power_loss_charging, test_power_loss_no_car,
     test_disable_after_switch, test_busy_bridge, test_parallel_requests,
     test_write_multiple_phases, test_concurrent_rtu_and_status, test_clear_event_log,
+    test_charge_pause,
 ]
 
 # tests that end in a safety fault on purpose
@@ -1050,6 +1083,7 @@ EXPECTS_ENERGY_LOSS = {test_dead_wallbox, test_power_loss_charging, test_power_l
 def prepare(b):
     """Common start state: car unplugged, no PV, evcc in PV mode, short delays."""
     b.sim("silent off")
+    b.sim("wait off")
     b.sim("phases auto")
     b.sim("car off")
     b.sim("pv 0")

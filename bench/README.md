@@ -131,6 +131,7 @@ after 15 minutes.
 | `pv <W>` | set the PV power |
 | `house <W>` | set the house load (start: 500 W) |
 | `silent on` / `silent off` | the wallbox stops answering (e.g. for `0xE104`) |
+| `wait on` / `wait off` | at 0 A the car waits in C1 (status 6) instead of B, like a car during a PV pause |
 | `phases auto\|0\|1\|3` | power from the contactor feedback (auto) or forced |
 | `status` | write the state to `sim.log` |
 | `json` | reply with the state as JSON (phases, status, currents, energy, watchdog, ...) |
@@ -260,6 +261,7 @@ known problem.
 | 28 | Write Multiple Registers | register 4 written with Write Multiple Registers instead of Write Single Register: an invalid value returns exception 3, a range across register 4 exception 2, a valid value switches the phases |
 | 29 | Concurrent RTU & web status | two Modbus TCP clients reading wallbox registers and `POST /status` for 30 s while charging, then 5 connections against the cap of 3 (evcc holds one): exactly 2 answer and the status page stays reachable; no false outage or evcc timeout, the current never drops to 0 A; event log: refused connection |
 | 30 | Clear event log | `GET /events` does not clear the log, `POST /events` leaves only `event log cleared on the web page`; after a reboot that entry is still the oldest, followed by the restart entries; clearing leaves the contactor cycle counters unchanged |
+| 31 | Charge pause | with `wait on`, PV drops to 0 while charging: evcc pauses, the car waits in C1; event log: `charging paused`, then `charging resumed` when PV returns, and after unplugging one `charging stopped, x kWh` for the whole charge, no new `charging started`; evcc warns `charger logic error: disabled but charging` during the pause because it maps C1 to charging, as with a real car waiting in C1 |
 
 ### Known problems
 
