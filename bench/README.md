@@ -132,6 +132,7 @@ after 15 minutes.
 | `house <W>` | set the house load (start: 500 W) |
 | `silent on` / `silent off` | the wallbox stops answering (e.g. for `0xE104`) |
 | `wait on` / `wait off` | at 0 A the car waits in C1 (status 6) instead of B, like a car during a PV pause |
+| `stopdelay <s>` | the car keeps drawing current for that long after a stop (`stopdelay 0`: stops at once); `json` counts `cuts_under_load` when the board cuts the power while current flows |
 | `phases auto\|0\|1\|3` | power from the contactor feedback (auto) or forced |
 | `status` | write the state to `sim.log` |
 | `json` | reply with the state as JSON (phases, status, currents, energy, watchdog, ...) |
@@ -262,6 +263,8 @@ known problem.
 | 29 | Concurrent RTU & web status | two Modbus TCP clients reading wallbox registers and `POST /status` for 30 s while charging, then 5 connections against the cap of 3 (evcc holds one): exactly 2 answer and the status page stays reachable; no false outage or evcc timeout, the current never drops to 0 A; event log: refused connection |
 | 30 | Clear event log | `GET /events` does not clear the log, `POST /events` leaves only `event log cleared on the web page`; after a reboot that entry is still the oldest, followed by the restart entries; clearing leaves the contactor cycle counters unchanged |
 | 31 | Charge pause | with `wait on`, PV drops to 0 while charging: evcc pauses, the car waits in C1; event log: `charging paused`, then `charging resumed` when PV returns, and after unplugging one `charging stopped, x kWh` for the whole charge, no new `charging started`; evcc warns `charger logic error: disabled but charging` during the pause because it maps C1 to charging, as with a real car waiting in C1 |
+| 32 | Restart during a phase switch | while charging on 3p with `stopdelay 3`, the web page requests 1p and a reboot 0.3 s later, so the restart lands while the car still draws current: the board stops charging and waits for zero current before it restarts (`cuts_under_load` unchanged), comes back and evcc charges again |
+| 33 | Web robustness | a form with `Content-Length` 2 MB gets 413, a form body that stops arriving gets 408, an OTA upload that stops after 4 kB is aborted with 408 after about 35 s; switch delays `abc`, `-1`, `500` and `700000` are refused and the stored delay stays; the board does not restart |
 
 ### Known problems
 

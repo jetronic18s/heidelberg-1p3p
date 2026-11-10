@@ -1061,6 +1061,83 @@ def test_charge_pause(b):
         b.sim("wait off")
 
 
+def test_restart_during_switch(b):
+    """Restart during a phase switch: charging stops before the contactors open"""
+    b.sim("stopdelay 3")  # the car keeps drawing current for 3 s after a stop
+    try:
+        b.start_charging(pv=7000, phases=3)
+        cuts = b.sim_state()["cuts_under_load"]
+        b.mark_log()
+        for path in ("/1p", "/reboot"):  # the restart lands in WaitingForZero
+            req = urllib.request.Request(b.esp + path, method="POST")
+            urllib.request.urlopen(req, timeout=5).read()
+            time.sleep(0.3)
+        b.note("switch to 1p requested on the web page, reboot 0.3 s later")
+        b.wait(lambda: re.search(r"Uptime:? = 00:0[0-2]:", b.esp_status_page()), 60, "ESP32 restarted")
+        b.wait_esp_running()
+        after = b.sim_state()["cuts_under_load"]
+        if after != cuts:
+            raise TestFailure("the contactors opened while current flowed")
+        b.wait(lambda: b.charging(), 240, "evcc charging again")
+        # the switch went past evcc, so evcc warns once when its phases differ
+        b.check_log(allowed=ALLOWED_ON_RESTART + [r"phases mismatch"])
+    finally:
+        b.sim("stopdelay 0")
+
+
+def raw_http(b, request, wait):
+    """Send raw bytes to the web server, return the response head ('' if none within wait s)."""
+    host = b.esp.split("//", 1)[1].rstrip("/")
+    data = b""
+    with socket.create_connection((host, 80), timeout=wait) as s:
+        s.sendall(request)
+        try:
+            while b"\r\n\r\n" not in data:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+        except socket.timeout:
+            pass
+    return data.decode("latin-1").split("\r\n\r\n", 1)[0]
+
+
+def test_web_robustness(b):
+    """Web robustness: oversized and stalled requests refused, a stalled OTA upload aborted"""
+    b.mark_events()
+    sd_before = re.search(r'name="sd" value="(\d+)"', urllib.request.urlopen(b.esp + "/config", timeout=5).read().decode())
+    # the web server calls the handler once the body starts
+    head = raw_http(b, b"POST /config HTTP/1.1\r\nHost: x\r\nContent-Length: 2000000\r\n\r\nsd=1", 15)
+    b.note(f"2 MB form body: {head.splitlines()[0] if head else 'no answer'}")
+    if " 413 " not in head:
+        raise TestFailure(f"an oversized form body was not refused with 413: {head!r}")
+    t0 = time.monotonic()
+    head = raw_http(b, b"POST /config HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\nsd=1", 30)
+    b.note(f"stalled form body: {head.splitlines()[0] if head else 'no answer'} after {time.monotonic() - t0:.0f} s")
+    if " 408 " not in head:
+        raise TestFailure(f"a stalled form body was not given up with 408: {head!r}")
+    with open(os.path.join(REPO, "build", "heidelberg-1p3p.bin"), "rb") as f:
+        start = f.read(4096)  # a valid image start, then nothing more
+    t0 = time.monotonic()
+    head = raw_http(b, b"POST /update?name=heidelberg-1p3p.bin HTTP/1.1\r\nHost: x\r\n"
+                    b"Content-Type: application/octet-stream\r\nContent-Length: 500000\r\n\r\n" + start, 60)
+    b.note(f"stalled OTA upload: {head.splitlines()[0] if head else 'no answer'} after {time.monotonic() - t0:.0f} s")
+    if " 408 " not in head:
+        raise TestFailure(f"a stalled OTA upload was not aborted: {head!r}")
+    for value in ("abc", "-1", "500", "700000"):
+        resp = urllib.request.urlopen(urllib.request.Request(
+            b.esp + "/config", data=f"sd={value}".encode(), method="POST"), timeout=5)
+        if "err=sd" not in resp.geturl():
+            raise TestFailure(f"switch delay {value!r} was accepted")
+    sd_after = re.search(r'name="sd" value="(\d+)"', urllib.request.urlopen(b.esp + "/config", timeout=5).read().decode())
+    if not sd_before or not sd_after or sd_before[1] != sd_after[1]:
+        raise TestFailure(f"switch delay changed: {sd_before and sd_before[1]} -> {sd_after and sd_after[1]}")
+    b.wait_esp_running(30)
+    if any("start:" in e for e in b.events_since_mark()):
+        raise TestFailure("the board restarted")
+    b.check_log()
+
+
 TESTS = [
     test_boot, test_pv_charging, test_auto_1p, test_auto_3p, test_manual_switch,
     test_current_after_switch, test_switch_without_evcc, test_switch_while_disabled,
@@ -1070,7 +1147,7 @@ TESTS = [
     test_dead_wallbox, test_power_loss_charging, test_power_loss_no_car,
     test_disable_after_switch, test_busy_bridge, test_parallel_requests,
     test_write_multiple_phases, test_concurrent_rtu_and_status, test_clear_event_log,
-    test_charge_pause,
+    test_charge_pause, test_restart_during_switch, test_web_robustness,
 ]
 
 # tests that end in a safety fault on purpose
@@ -1084,6 +1161,7 @@ def prepare(b):
     """Common start state: car unplugged, no PV, evcc in PV mode, short delays."""
     b.sim("silent off")
     b.sim("wait off")
+    b.sim("stopdelay 0")
     b.sim("phases auto")
     b.sim("car off")
     b.sim("pv 0")

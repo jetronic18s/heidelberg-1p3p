@@ -73,6 +73,10 @@ class Wallbox:
         self.lock = threading.Lock()
         self.car = args.car
         self.car_waits = False  # car asks for current at 0 A: C1 instead of B
+        self.stop_delay = 0.0  # seconds the car keeps drawing current after a stop
+        self.last_currents = [0, 0, 0]
+        self.ramp_until = None
+        self.cuts_under_load = 0
         self.silent = False
         self.forced_phases = None if args.esp_url else 1
         self.esp_phases = 0
@@ -106,6 +110,9 @@ class Wallbox:
         phases = self.phases()
         if phases != self.powered_phases:
             if self.powered_phases and not phases:
+                if any(self.currents(now)):
+                    self.cuts_under_load += 1
+                    log("power cut under load: the contactors opened while current flowed")
                 lost = self.energy_wh - self.saved_energy_wh
                 log(f"power off, energy counter falls back to {self.saved_energy_wh:.0f} Wh"
                     + (f", {lost:.1f} Wh lost" if lost >= 0.5 else ""))
@@ -133,6 +140,12 @@ class Wallbox:
                 log("watchdog ok again")
             self.watchdog_tripped = tripped
         currents = self.currents(now)
+        # A locked wallbox stores its counter again once the current is 0:
+        # energy the car drew while stopping after the lock is kept.
+        if (self.powered_phases and self.locked(now) and not any(currents)
+                and self.energy_wh - self.saved_energy_wh >= 0.5):
+            self.saved_energy_wh = self.energy_wh
+            log(f"locked and no current, energy counter saved at {self.saved_energy_wh:.0f} Wh")
         power = sum(c * 230 for c in currents) / 10
         self.power_w = power
         self.energy_wh += power * dt / 3600
@@ -171,10 +184,20 @@ class Wallbox:
         return STATUS_B2 if self.charge_allowed_at is not None else STATUS_B1
 
     def currents(self, now):
-        if not self.powered_phases or not self.charging(now):
-            return [0, 0, 0]
-        current = max(min(self.max_current(), self.args.car_max * 10) - 2, 0)
-        return [current] * self.powered_phases + [0] * (3 - self.powered_phases)
+        if self.powered_phases and self.charging(now):
+            current = max(min(self.max_current(), self.args.car_max * 10) - 2, 0)
+            self.last_currents = [current] * self.powered_phases + [0] * (3 - self.powered_phases)
+            self.ramp_until = None
+            return self.last_currents
+        # a real car takes a moment to stop drawing current
+        if self.powered_phases and self.stop_delay and any(self.last_currents):
+            if self.ramp_until is None:
+                self.ramp_until = now + self.stop_delay
+            if now < self.ramp_until:
+                return self.last_currents
+        self.last_currents = [0, 0, 0]
+        self.ramp_until = None
+        return [0, 0, 0]
 
     def input_registers(self):
         now = time.monotonic()
@@ -287,6 +310,7 @@ class Wallbox:
             "energy_wh": round(self.energy_wh, 1),
             "saved_energy_wh": round(self.saved_energy_wh, 1),
             "energy_lost_wh": round(self.energy_lost_wh, 1),
+            "cuts_under_load": self.cuts_under_load,
             "pv_w": self.pv_w,
             "house_w": self.house_w,
             "grid_w": round(self.grid_w()),
@@ -299,6 +323,9 @@ class Wallbox:
             if words[:1] == ["car"] and words[1:] in (["on"], ["off"]):
                 self.car = words[1] == "on"
                 log(f"car {'connected' if self.car else 'disconnected'}")
+            elif words[:1] == ["stopdelay"] and len(words) == 2 and words[1].replace(".", "", 1).isdigit():
+                self.stop_delay = float(words[1])
+                log(f"car stops drawing current {self.stop_delay:.1f} s after a stop")
             elif words[:1] == ["wait"] and words[1:] in (["on"], ["off"]):
                 self.car_waits = words[1] == "on"
                 log(f"car waits for current in C1: {words[1]}")
