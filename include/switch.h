@@ -149,6 +149,7 @@
             uint32_t _carQuietUntilMs; // see logCarState()
             std::atomic<uint32_t> _lastClientAddr; // last Modbus TCP client, network order
             uint32_t _restartDeadlineMs;
+            bool _restartStopWritten;
             void handleRestart();
             void requestPhases(uint8_t phases);
             // source: SwitchSource from event_log.h, for the event log
@@ -160,6 +161,7 @@
             void finishSwitchStats();
             void rememberCarState();
             void logCarState();
+            bool writeRestartStop();
             void logRefusedConnections(bool now);
             void saveBootCache();
             void loadBootCache();

@@ -197,6 +197,7 @@ PhaseSwitch::PhaseSwitch()
   ,_carQuietUntilMs(0)
   ,_lastClientAddr(0)
   ,_restartDeadlineMs(0)
+  ,_restartStopWritten(false)
 {}
 
 void PhaseSwitch::begin(){
@@ -739,6 +740,19 @@ void PhaseSwitch::loop(){
   }
 }
 
+// 0 A, then lock like a phase switch does: the Heidelberg keeps its energy
+// counter across the power loss only once it is locked.
+bool PhaseSwitch::writeRestartStop(){
+  if (masterWriteHolding(HEC_REG_MAX_CURRENT, 0) != ESP_OK) {
+    ESP_LOGW(TAG, "restarting, could not stop charging, trying again");
+    return false;
+  }
+  if (masterWriteHolding(HEC_REG_REMOTE_LOCK, 0) != ESP_OK) {
+    ESP_LOGW(TAG, "restarting, could not lock the wallbox");
+  }
+  return true;
+}
+
 void PhaseSwitch::requestRestart(){
   _restartRequested = true;
 }
@@ -748,8 +762,12 @@ void PhaseSwitch::requestRestart(){
 // While Restarting, Modbus writes from evcc only go to the cache.
 void PhaseSwitch::handleRestart(){
   if (_state != State::Restarting) {
-    // Outside Running and Unlocking the current is already 0 or the wallbox is off.
-    const bool mayCharge = _state == State::Running || _state == State::Unlocking;
+    // During a phase switch the car may still draw current until the
+    // contactors are off: in SwitchPhases the 0 A write may not have gone
+    // through yet, in WaitingForZero the car is still ramping down. In the
+    // later states the contactors are off or the wallbox is not charging yet.
+    const bool mayCharge = _state == State::Running || _state == State::Unlocking
+      || _state == State::SwitchPhases || _state == State::WaitingForZero;
     if (_state == State::Running) rememberCarState();
     if (!mayCharge || !_master_handle || hasSafetyFault()) {
       ESP_LOGI(TAG, "restarting");
@@ -759,21 +777,16 @@ void PhaseSwitch::handleRestart(){
     _restartDeadlineMs = nowMs() + RESTART_STOP_TIMEOUT_MS;
     _previous = nowMs();
     _delay = 0;
-    if (masterWriteHolding(HEC_REG_MAX_CURRENT, 0) != ESP_OK) {
-      ESP_LOGW(TAG, "restarting, could not stop charging");
-      restartNow();
-    }
-    // Lock the wallbox like a phase switch does: the Heidelberg keeps its
-    // energy counter across the power loss only once it is locked.
-    if (masterWriteHolding(HEC_REG_REMOTE_LOCK, 0) != ESP_OK) {
-      ESP_LOGW(TAG, "restarting, could not lock the wallbox");
-    }
+    _restartStopWritten = writeRestartStop();
     ESP_LOGI(TAG, "restart requested, waiting for lock and zero current");
     return;
   }
 
   if (nowMs() - _previous < 500) return;
   _previous = nowMs();
+  // A failed write must not open the contactors under load: try again
+  // until the deadline.
+  if (!_restartStopWritten) _restartStopWritten = writeRestartStop();
 
   uint16_t data[4];
   const bool stopped = masterReadInput(5, 4, data) == ESP_OK
