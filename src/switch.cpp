@@ -1,4 +1,5 @@
 #include "switch.h"
+#include "event_log.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -50,6 +51,9 @@ static constexpr uint32_t WALLBOX_RESPONSE_TIMEOUT_MS = 60000;
 static constexpr uint32_t ZERO_LOAD_TIMEOUT_MS = 15000;
 static constexpr uint32_t RESTART_STOP_TIMEOUT_MS = 10000;
 static constexpr uint32_t UNLOCK_CONFIRM_TIMEOUT_MS = 15000;
+// After a phase switch or a start, charging that pauses this long is not
+// logged as the end of the charge.
+static constexpr uint32_t CAR_EVENT_QUIET_MS = 90000;
 // A wallbox silent this long in Running is reported as not responding.
 static constexpr uint32_t WALLBOX_SILENT_TIMEOUT_MS = 60000;
 static constexpr uint16_t MODBUS_TCP_PORT = 502;
@@ -186,6 +190,10 @@ PhaseSwitch::PhaseSwitch()
   ,_lastSwitchMs(0)
   ,_lastSwitchFrom(0)
   ,_lastSwitchTo(0)
+  ,_switchSource(0)
+  ,_refusedSinceLog(0)
+  ,_lastRefusedLogMs(0)
+  ,_carQuietUntilMs(0)
   ,_lastClientAddr(0)
   ,_restartDeadlineMs(0)
 {}
@@ -241,6 +249,17 @@ void PhaseSwitch::saveBootCache(){
   s_bootCache.crc = bootCacheCrc(s_bootCache);
 }
 
+// A client retrying in a loop must not flood the event log: one entry at
+// most every 60 s. The main loop logs what is left once the 60 s are over.
+void PhaseSwitch::logRefusedConnections(bool now){
+  if (_refusedSinceLog == 0) return;
+  if (!now && nowMs() - _lastRefusedLogMs < 60000) return;
+  const uint32_t count = _refusedSinceLog.exchange(0);
+  if (count == 0) return;
+  _lastRefusedLogMs = nowMs();
+  eventLog(EventType::ModbusRefused, 0, 0, 0, count);
+}
+
 void PhaseSwitch::restartNow(){
   saveBootCache();
   eventLogLockForRestart();
@@ -259,6 +278,43 @@ void PhaseSwitch::rememberCarState(){
   } else if (status >= 4 && status <= 8) {
     _reportedStatus = HEC_STATUS_B1;
   }
+}
+
+// Car and charge events from the charging state in Running (input register
+// 5): A no car, B connected, C charging. The state is kept across restarts,
+// so a phase switch or a restart does not end the charge in the log.
+void PhaseSwitch::logCarState(){
+  uint16_t status;
+  uint32_t energyWh;
+  {
+    std::lock_guard<std::mutex> lock(_cacheMutex);
+    status = _inputRegister[5];
+    energyWh = (uint32_t)_inputRegister[17] << 16 | _inputRegister[18];
+  }
+  uint8_t carClass;
+  if (status == 2 || status == 3) carClass = 0;
+  else if (status == 4 || status == 5) carClass = 1;
+  else if (status >= 6 && status <= 8) carClass = 2;
+  else return; // error, locked: no change
+
+  const uint8_t previous = eventLogCarClass();
+  if (carClass == previous) return;
+  // After a phase switch or a start the car waits until evcc sets the
+  // current again; that is no end of the charge.
+  if (previous == 2 && carClass == 1 && !pastDeadline(_carQuietUntilMs)) return;
+  uint32_t chargeStartWh = eventLogChargeStartWh();
+  if (previous != 0xFF) {
+    if (previous == 2) {
+      const uint32_t energy = chargeStartWh && energyWh >= chargeStartWh
+        ? energyWh - chargeStartWh : EVENT_VALUE_UNKNOWN;
+      eventLog(EventType::ChargeEnd, 0, 0, 0, energy);
+    }
+    if (previous == 0) eventLog(EventType::CarConnected);
+    if (carClass == 0) eventLog(EventType::CarDisconnected);
+    if (carClass == 2) eventLog(EventType::ChargeStart);
+  }
+  if (carClass == 2 && previous != 2) chargeStartWh = previous == 0xFF ? 0 : energyWh;
+  eventLogSetCarState(carClass, chargeStartWh);
 }
 
 // Outside Running, evcc is served from the cache: during a phase switch, a
@@ -506,22 +562,23 @@ void PhaseSwitch::loop(){
     const uint8_t requested = _requestedPhases.exchange(0);
     if (requested == 1 && _desiredPhases != 1) {
       ESP_LOGI(TAG, "running the pending switch to 1p");
-      startSwitch(1);
+      startSwitch(1, (uint8_t)SwitchSource::Evcc);
       return;
     }
     if (requested == 3 && _desiredPhases != 3) {
       ESP_LOGI(TAG, "running the pending switch to 3p");
-      startSwitch(3);
+      startSwitch(3, (uint8_t)SwitchSource::Evcc);
       return;
     }
     
     checkEvccWatchdog();
     checkWallboxSilent();
+    logRefusedConnections(false);
 
     // Update registers every 2 seconds
     static uint32_t last_update = 0;
     if (nowMs() - last_update > 2000) {
-        updateCachedRegisters();
+        if (updateCachedRegisters()) logCarState();
         last_update = nowMs();
     }
     return;
@@ -653,6 +710,7 @@ void PhaseSwitch::loop(){
       ESP_LOGI(TAG, "unlock confirmed");
       _lastWallboxOkMs = nowMs();
       finishSwitchStats();
+      _carQuietUntilMs = nowMs() + CAR_EVENT_QUIET_MS;
       _state = State::Running;
       return;
     }
@@ -661,6 +719,7 @@ void PhaseSwitch::loop(){
       masterWriteHolding(HEC_REG_REMOTE_LOCK, 1);
       _lastWallboxOkMs = nowMs();
       finishSwitchStats();
+      _carQuietUntilMs = nowMs() + CAR_EVENT_QUIET_MS;
       _state = State::Running;
       return;
     }
@@ -720,11 +779,12 @@ void PhaseSwitch::handleRestart(){
 }
 
 // Callers hold _stateMutex.
-void PhaseSwitch::startSwitch(uint8_t phases){
+void PhaseSwitch::startSwitch(uint8_t phases, uint8_t source){
   if (phases == 1 ? !canSwitchTo1P() : !canSwitchTo3P()) return;
   rememberCarState();
   _lastSwitchFrom = _desiredPhases.load();
   _lastSwitchTo = phases;
+  _switchSource = source;
   _switchStartMs = nowMs();
   _switchCount++;
   _desiredPhases = phases;
@@ -738,12 +798,12 @@ void PhaseSwitch::startSwitch(uint8_t phases){
 
 void PhaseSwitch::switchTo1P(){
   std::lock_guard<std::mutex> lock(_stateMutex);
-  startSwitch(1);
+  startSwitch(1, (uint8_t)SwitchSource::WebPage);
 }
 
 void PhaseSwitch::switchTo3P(){
   std::lock_guard<std::mutex> lock(_stateMutex);
-  startSwitch(3);
+  startSwitch(3, (uint8_t)SwitchSource::WebPage);
 }
 
 // Phase request from evcc (register 4). Outside Running the request is kept
@@ -753,7 +813,7 @@ void PhaseSwitch::requestPhases(uint8_t phases){
   std::lock_guard<std::mutex> lock(_stateMutex);
   if (_state == State::Running && _firmwareSupported) {
     _requestedPhases = 0;
-    startSwitch(phases);
+    startSwitch(phases, (uint8_t)SwitchSource::Evcc);
     return;
   }
   _requestedPhases = phases;
@@ -783,6 +843,7 @@ void PhaseSwitch::checkEvccWatchdog(){
   cacheHolding(HEC_REG_MAX_CURRENT, &failsafe, 1);
   _evccTimeout = true;
   _evccTimeouts++;
+  eventLog(EventType::EvccTimeout, 0, 0, 0, failsafe);
   ESP_LOGW(TAG, "no request from evcc for %u ms, failsafe current %u.%u A",
            (unsigned)timeoutMs, failsafe / 10, failsafe % 10);
 }
@@ -811,6 +872,7 @@ void PhaseSwitch::noteRtuResult(esp_err_t err){
     _lastOutageMs = now - _wallboxSilentSinceMs;
     _lastOutageEndMs = now;
     ESP_LOGI(TAG, "wallbox answers again");
+    eventLog(EventType::WallboxBack, 0, 0, 0, _lastOutageMs);
   }
 }
 
@@ -825,6 +887,7 @@ void PhaseSwitch::checkWallboxSilent(){
   _wallboxSilentSinceMs = _lastWallboxOkMs.load();
   _wallboxOutages++;
   _wallboxSilent = true;
+  eventLog(EventType::WallboxSilent);
   ESP_LOGW(TAG, "wallbox not responding for %u s", (unsigned)(WALLBOX_SILENT_TIMEOUT_MS / 1000));
 }
 
@@ -907,6 +970,7 @@ void PhaseSwitch::finishSwitchStats(){
   _lastSwitchMs = done - start;
   _lastSwitchDoneMs = done;
   _switchStartMs = 0;
+  eventLog(EventType::PhaseSwitch, _lastSwitchFrom, _lastSwitchTo, _switchSource, _lastSwitchMs);
 }
 
 std::string PhaseSwitch::switchStatusText(){
@@ -992,6 +1056,7 @@ void PhaseSwitch::enterSafetyFault(uint16_t code, const char *text){
   _state = State::Fault;
 
   ESP_LOGE(TAG, "SAFETY FAULT 0x%04X: %s", code, _safetyFaultText.load());
+  eventLog(EventType::SafetyFault, 0, 0, 0, code);
 }
 
 bool PhaseSwitch::hasSafetyFault(){
@@ -1209,6 +1274,8 @@ void PhaseSwitch::tcpBridgeTask()
     if (_bridgeActiveClientCount >= MAX_MODBUS_TCP_CLIENTS) {
       _bridgeErrorCount++;
       close(clientFd);
+      _refusedSinceLog++;
+      logRefusedConnections(_lastRefusedLogMs == 0);
       continue;
     }
     _bridgeActiveClientCount++;
@@ -1307,10 +1374,12 @@ bool PhaseSwitch::handleModbusRequest(uint8_t unitId, const uint8_t* pdu, size_t
 
   {
     std::lock_guard<std::mutex> lock(_evccMutex);
+    const uint32_t silentMs = msSince(_lastBridgeRequestMs);
     _lastBridgeRequestMs = nowMs();
     if (_evccTimeout) {
       _evccTimeout = false;
       ESP_LOGI(TAG, "evcc is back");
+      eventLog(EventType::EvccBack, 0, 0, 0, silentMs);
     }
   }
 

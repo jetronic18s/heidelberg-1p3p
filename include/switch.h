@@ -142,18 +142,25 @@
             std::atomic<uint16_t> _hwMaxCurrent, _hwMinCurrent, _swRevision;
             std::atomic<uint32_t> _switchCount; // read by the web page
             std::atomic<uint32_t> _switchStartMs, _lastSwitchDoneMs, _lastSwitchMs;
-            std::atomic<uint8_t> _lastSwitchFrom, _lastSwitchTo;
+            std::atomic<uint8_t> _lastSwitchFrom, _lastSwitchTo, _switchSource;
+            // refused Modbus TCP connections, logged at most once a minute
+            std::atomic<uint32_t> _refusedSinceLog; // bridge task counts, main loop flushes
+            std::atomic<uint32_t> _lastRefusedLogMs;
+            uint32_t _carQuietUntilMs; // see logCarState()
             std::atomic<uint32_t> _lastClientAddr; // last Modbus TCP client, network order
             uint32_t _restartDeadlineMs;
             void handleRestart();
             void requestPhases(uint8_t phases);
-            void startSwitch(uint8_t phases);
+            // source: SwitchSource from event_log.h, for the event log
+            void startSwitch(uint8_t phases, uint8_t source);
             uint8_t reportedPhases();
             void checkEvccWatchdog();
             void checkWallboxSilent();
             void noteRtuResult(esp_err_t err);
             void finishSwitchStats();
             void rememberCarState();
+            void logCarState();
+            void logRefusedConnections(bool now);
             void saveBootCache();
             void loadBootCache();
             [[noreturn]] void restartNow();
