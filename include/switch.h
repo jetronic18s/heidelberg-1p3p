@@ -91,7 +91,7 @@
             FifoMutex _rtuMutex;
             std::atomic<uint32_t> _switchDelay;
             bool validateSetup();
-            uint8_t getActivePhases();
+            bool readActivePhases(uint8_t &phases);
             //modbus
             void* _master_handle;
             std::atomic<bool> _masterStarted;
@@ -112,6 +112,7 @@
             std::atomic<const char*> _safetyFaultText;
             uint32_t _switchOffDeadlineMs;
             uint32_t _switchOnDeadlineMs;
+            bool _switchOnAnswered; // the wallbox answered since switching on
             uint32_t _wallboxResponseDeadlineMs;
             uint32_t _zeroLoadDeadlineMs;
             uint32_t _unlockDeadlineMs;

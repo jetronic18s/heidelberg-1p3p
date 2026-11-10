@@ -175,6 +175,7 @@ PhaseSwitch::PhaseSwitch()
   ,_safetyFaultText("")
   ,_switchOffDeadlineMs(0)
   ,_switchOnDeadlineMs(0)
+  ,_switchOnAnswered(false)
   ,_wallboxResponseDeadlineMs(0)
   ,_zeroLoadDeadlineMs(0)
   ,_unlockDeadlineMs(0)
@@ -567,6 +568,7 @@ void PhaseSwitch::loop(){
     }
     cycleCounterContactorOn(_desiredPhases);
     _switchOnDeadlineMs = now + SWITCH_POWER_ON_SETTLE_MS + SWITCH_CONFIRM_TIMEOUT_MS;
+    _switchOnAnswered = false;
     _wallboxResponseDeadlineMs = now + WALLBOX_RESPONSE_TIMEOUT_MS;
     _previous = now;
     _delay = SWITCH_POWER_ON_SETTLE_MS;
@@ -674,44 +676,46 @@ void PhaseSwitch::loop(){
     return;
   }
   else if (_state == State::SwitchedOn){
-    if (_desiredPhases == 3){
-      if (readPin(PIN_3P_IN) != 1) {
-        if (pastDeadline(_switchOnDeadlineMs)) {
-          enterSafetyFault(SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT, "timeout waiting for 3P feedback input");
-          return;
-        }
-        return;
+    const uint8_t desired = _desiredPhases;
+    // the feedback input comes from the contactor itself
+    if (readPin(desired == 3 ? PIN_3P_IN : PIN_1P_IN) != 1) {
+      if (pastDeadline(_switchOnDeadlineMs)) {
+        enterSafetyFault(SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT,
+                         desired == 3 ? "timeout waiting for 3P feedback input" : "timeout waiting for 1P feedback input");
       }
-      if (getActivePhases() != 3) {
-        if (pastDeadline(_switchOnDeadlineMs)) {
-          enterSafetyFault(SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT, "timeout waiting for 3P confirmation");
-          return;
-        }
-        _previous = nowMs();
-        _delay = 1000;
-        return;
-      }
-      ESP_LOGI(TAG, "confirmed 3p");
+      return;
     }
-    else {
-      if (readPin(PIN_1P_IN) != 1) {
-        if (pastDeadline(_switchOnDeadlineMs)) {
-          enterSafetyFault(SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT, "timeout waiting for 1P feedback input");
-          return;
-        }
+    // The voltages need a wallbox that answers. It boots after the power
+    // cut: while it is silent, only the response deadline counts (E104);
+    // once it answers, it gets the confirm time to see the right phases.
+    uint8_t active = 0;
+    if (!readActivePhases(active)) {
+      if (pastDeadline(_wallboxResponseDeadlineMs)) {
+        enterSafetyFault(SAFETY_FAULT_WALLBOX_NOT_RESPONDING, "wallbox not responding after power-on");
         return;
       }
-      if (getActivePhases() != 1) {
-        if (pastDeadline(_switchOnDeadlineMs)) {
-          enterSafetyFault(SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT, "timeout waiting for 1P confirmation");
-          return;
-        }
-        _previous = nowMs();
-        _delay = 1000;
-        return;
-      }
-      ESP_LOGI(TAG, "confirmed 1p");
+      _previous = nowMs();
+      _delay = 1000;
+      return;
     }
+    if (active != desired) {
+      if (!_switchOnAnswered) {
+        _switchOnAnswered = true;
+        const uint32_t answerDeadline = nowMs() + SWITCH_CONFIRM_TIMEOUT_MS;
+        if (pastDeadline(_switchOnDeadlineMs) || (int32_t)(answerDeadline - _switchOnDeadlineMs) > 0) {
+          _switchOnDeadlineMs = answerDeadline;
+        }
+      }
+      if (pastDeadline(_switchOnDeadlineMs)) {
+        enterSafetyFault(SAFETY_FAULT_SWITCH_CONFIRM_TIMEOUT,
+                         desired == 3 ? "timeout waiting for 3P confirmation" : "timeout waiting for 1P confirmation");
+        return;
+      }
+      _previous = nowMs();
+      _delay = 1000;
+      return;
+    }
+    ESP_LOGI(TAG, "confirmed %up", (unsigned)desired);
     _state = State::Delay;
     _previous = nowMs();
     _delay = _switchDelay;
@@ -1264,14 +1268,16 @@ bool PhaseSwitch::validateSetup(){
   return _switchingSupported && _firmwareSupported;
 }
 
-uint8_t PhaseSwitch::getActivePhases(){
-  if (!_master_handle) return 0;
+// false if the wallbox did not answer; phases 0 for a pattern that is
+// neither 1p nor 3p
+bool PhaseSwitch::readActivePhases(uint8_t &phases){
+  phases = 0;
+  if (!_master_handle) return false;
   uint16_t l[3];
-  if (masterReadInput(10, 3, l) == ESP_OK){
-    if (l[0] >= 208 && l[1] < 208 && l[2] < 208) return 1;
-    if (l[0] >= 208 && l[1] >= 208 && l[2] >= 208) return 3;
-  }
-  return 0;
+  if (masterReadInput(10, 3, l) != ESP_OK) return false;
+  if (l[0] >= 208 && l[1] < 208 && l[2] < 208) phases = 1;
+  else if (l[0] >= 208 && l[1] >= 208 && l[2] >= 208) phases = 3;
+  return true;
 }
 
 static uint16_t readU16be(const uint8_t *p)
