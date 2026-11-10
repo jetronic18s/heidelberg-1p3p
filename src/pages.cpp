@@ -838,12 +838,20 @@ static esp_err_t handleUpdatePost(httpd_req_t *req)
 
   int remaining = req->content_len;
   uint8_t buf[1024];
+  // A client that vanishes without closing the connection (WiFi gone,
+  // laptop asleep) must not block the web server and evcc's writes
+  // forever: give up after 30 s without data (6 x recv_wait_timeout).
+  int timeouts = 0;
   while (remaining > 0) {
     int readLen = remaining < (int)sizeof(buf) ? remaining : (int)sizeof(buf);
     int r = httpd_req_recv(req, (char *)buf, readLen);
     if (r == HTTPD_SOCK_ERR_TIMEOUT) {
-      continue;
+      if (++timeouts <= 6) continue;
+      esp_ota_abort(otaHandle);
+      httpd_resp_send_err(req, HTTPD_408_REQ_TIMEOUT, "OTA upload stalled, aborted");
+      return ESP_FAIL; // close the connection instead of draining the rest
     }
+    timeouts = 0;
     if (r <= 0) {
       esp_ota_abort(otaHandle);
       sendText(req, "400 Bad Request", "OTA read failed");
