@@ -129,6 +129,41 @@ class Bench:
             return ""
         return re.sub(r"<[^>]*>", "\n", html.replace("</td><td>", " = "))
 
+    def esp_events(self):
+        """Event log rows "time | text", newest first."""
+        try:
+            with urllib.request.urlopen(self.esp + "/status", timeout=3) as resp:
+                html = resp.read().decode("utf-8", "replace")
+        except OSError:
+            return []
+        html = html[html.find("<b>Events</b>"):]
+        return [" | ".join(re.sub(r"<[^>]*>", "", cell) for cell in re.findall(r"<td[^>]*>(.*?)</td>", row))
+                for row in re.findall(r"<tr>(.*?)</tr>", html)]
+
+    def mark_events(self):
+        events = self.esp_events()
+        self.events_mark = events[0] if events else None
+
+    def events_since_mark(self):
+        events = self.esp_events()
+        if self.events_mark in events:
+            return events[:events.index(self.events_mark)]
+        return events  # cleared by a power loss
+
+    def expect_events(self, *patterns):
+        """Each pattern must match an event logged since mark_events()."""
+        events = self.events_since_mark()
+        self.note("events: " + "; ".join(e.split(" | ", 1)[-1] for e in reversed(events)))
+        for pattern in patterns:
+            if not any(re.search(pattern, e) for e in events):
+                raise TestFailure(f"no event /{pattern}/ in the event log")
+
+    def esp_cycles(self):
+        """Contactor cycles: (1p on, 3p on, phase switches)"""
+        m = re.search(r"Contactor cycles: = 1p (\d+)x on, 3p (\d+)x on, (\d+) phase switches",
+                      self.esp_status_page())
+        return tuple(int(v) for v in m.groups()) if m else None
+
     def esp_state(self):
         page = self.esp_page()
         return page[1] if page else None
@@ -330,11 +365,13 @@ def test_boot(b):
 
 def test_pv_charging(b):
     """PV charging: car + 6 kW PV, evcc charges 3p at about 8 A"""
+    b.mark_events()
     b.sim("car on")
     b.sim("pv 6000")
     b.wait(lambda: b.lp()["connected"], 30, "evcc: car connected")
     b.wait(lambda: b.charging(3), 240, "evcc charging on 3p")
     b.settle(30)
+    b.expect_events(r"car connected", r"charging started")
     st = b.sim_state()
     b.note(f"currents {st['currents']} A, grid {st['grid_w']} W")
     if not all(6.5 <= c <= 10 for c in st["currents"]):
@@ -371,6 +408,8 @@ def test_manual_switch(b):
     """Manual switch via evcc: phases 1 and 3 switch at once"""
     b.start_charging(pv=7000)
     b.mark_log()
+    b.mark_events()
+    before = b.esp_cycles()
     try:
         b.evcc_post("phases/1")
         b.wait(lambda: b.charging(1), 120, "charging on 1p after manual switch")
@@ -378,6 +417,11 @@ def test_manual_switch(b):
         b.wait(lambda: b.charging(3), 120, "charging on 3p after manual switch")
     finally:
         b.evcc_post("phases/0")
+    b.expect_events(r"phase switch 3p to 1p \(evcc\), took", r"phase switch 1p to 3p \(evcc\), took")
+    after = b.esp_cycles()
+    b.note(f"contactor cycles {before} -> {after}")
+    if not before or not after or (after[0] - before[0], after[1] - before[1], after[2] - before[2]) != (1, 1, 2):
+        raise TestFailure(f"expected one cycle per contactor and two switches, got {before} -> {after}")
     b.check_log()
 
 
@@ -440,12 +484,14 @@ def test_restart_charging(b):
     """Restart while charging: no evcc errors, energy kept, charging resumes"""
     b.start_charging()
     b.mark_log()
+    b.mark_events()
     b.esp_reboot()
     b.wait_esp_running()
     b.settle(15)
     if any("car disconnected" in line for line in b.log_since_mark()):
         raise TestFailure("evcc saw the car disconnect during the restart")
     b.wait(lambda: b.charging(), 180, "evcc charging again")
+    b.expect_events(r"restart requested on the web page", r"start: software")
     b.check_log(allowed=ALLOWED_ON_RESTART)
 
 
@@ -497,9 +543,12 @@ def test_unplug(b):
     """Unplug while charging: evcc sees the car leave, current drops to 0"""
     b.start_charging()
     b.mark_log()
+    b.mark_events()
     b.sim("car off")
     b.wait(lambda: not b.lp()["connected"], 30, "evcc: car disconnected")
     b.wait(lambda: b.sim_state()["currents"] == [0, 0, 0], 15, "no current")
+    b.settle(5)
+    b.expect_events(r"charging stopped, [\d.]+ kWh", r"car disconnected")
     b.check_log()
 
 
@@ -584,6 +633,7 @@ def test_evcc_restart(b):
 def test_evcc_down(b):
     """evcc gone while charging: the board applies the failsafe current"""
     b.start_charging()
+    b.mark_events()
     b.evcc_stop()
     try:
         # Register 257 is 15 s by default; the board checks with the loop.
@@ -594,11 +644,13 @@ def test_evcc_down(b):
     finally:
         b.evcc_start()
     b.wait(lambda: b.charging(), 180, "evcc charging again")
+    b.expect_events(r"evcc timeout, failsafe current", r"evcc back after")
 
 
 def test_wallbox_dies(b):
     """Wallbox stops answering while charging: reported, charging resumes after"""
     b.start_charging()
+    b.mark_events()
     b.sim("silent on")
     try:
         # The wallbox's own watchdog stops charging after 15 s without requests.
@@ -622,6 +674,7 @@ def test_wallbox_dies(b):
     if seconds is None or not 60 <= seconds <= 180:
         raise TestFailure(f"implausible outage duration: {history.group(1)}")
     b.wait(lambda: b.charging(), 180, "evcc charging again")
+    b.expect_events(r"wallbox not responding", r"wallbox answers again after")
     # Before the board gives up (60 s) evcc gets exception 4, afterwards 11.
     b.check_log(allowed=[r"exception '4'", r"exception '11'", r"i/o timeout",
                          r"charger out of sync"])
@@ -639,8 +692,21 @@ def test_power_loss_charging(b):
         raise TestSkipped("no POWER_SWITCH in bench.env")
     b.start_charging(pv=7000, phases=3)
     b.mark_log()
+    before = b.esp_cycles()
     b.power_cycle()
     b.wait_esp_running(150)
+    # the event log starts over, the contactor counters are kept
+    events = b.esp_events()
+    b.note(f"oldest event after the power loss: {events[-1] if events else None}")
+    if not events or "start: power-on" not in events[-1]:
+        raise TestFailure("the event log was not cleared by the power loss")
+    after = b.esp_cycles()
+    b.note(f"contactor cycles {before} -> {after}")
+    # the cold start switches a contactor on, and evcc may already have
+    # switched back to 3p: the counters only must not go down
+    if (not before or not after or any(a < b for a, b in zip(after, before))
+            or after[0] + after[1] <= before[0] + before[1]):
+        raise TestFailure(f"contactor counters lost in the power loss: {before} -> {after}")
     restart = re.search(r"Last restart: = ([^\n]*)", b.esp_status_page())
     b.note(f"last restart: {restart.group(1) if restart else '?'}")
     if not restart or not restart.group(1).startswith("power-on"):
@@ -688,9 +754,11 @@ def test_dead_wallbox(b):
     """Dead wallbox: silent wallbox after power-on leads to safety fault 0xE104"""
     b.sim("car off")
     b.sim("silent on")
+    b.mark_events()
     try:
         b.esp_reboot()
         b.wait(lambda: b.esp_fault() == "0xE104", 150, "safety fault 0xE104")
+        b.expect_events(r"safety fault 0xE104")
     finally:
         b.sim("silent off")
     b.esp_reboot()
@@ -820,6 +888,7 @@ def test_concurrent_rtu_and_status(b):
     b.start_charging(phases=3)
     before = b.esp_status_page()
     b.mark_log()
+    b.mark_events()
 
     stop_time = time.monotonic() + 30
     errors = []
@@ -898,6 +967,7 @@ def test_concurrent_rtu_and_status(b):
         b.note(f"connection cap check: {alive}/5 sockets answered")
         if alive != 2:
             raise TestFailure(f"expected 2 answering sockets besides evcc, got {alive}")
+        b.expect_events(r"connections? refused \(client limit reached\)")
         # the cap keeps sockets free for the web server
         if "Memory" not in b.esp_status_page():
             raise TestFailure("status page not reachable while the Modbus clients are at the cap")

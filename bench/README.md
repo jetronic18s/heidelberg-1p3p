@@ -231,34 +231,34 @@ known problem.
 | # | Test | Checks |
 |---|---|---|
 | 1 | Boot | board reaches Running, evcc sees a charger with phase switching |
-| 2 | PV charging | car + 6 kW PV: evcc charges 3p at 6.5–10 A, grid within ±600 W |
+| 2 | PV charging | car + 6 kW PV: evcc charges 3p at 6.5–10 A, grid within ±600 W; event log: car connected, charging started |
 | 3 | Automatic 3p → 1p | 3 kW PV: evcc switches to 1p, 9–13 A on L1 |
 | 4 | Automatic 1p → 3p | 7 kW PV: evcc switches back to 3p |
-| 5 | Manual switch | evcc phases 1, then 3: the board switches each time |
+| 5 | Manual switch | evcc phases 1, then 3: the board switches each time; event log: both switches (evcc); contactor cycles: +1 per contactor, +2 phase switches |
 | 6 | Current after 3p → 1p | 5 kW PV, switch to 1p: the box keeps evcc's 16 A instead of 6 A (fix `b1ff5b1`) |
 | 7 | Switch without evcc | switch via register 4 while charging above 7 A: restart current at most 6 A |
 | 8 | Switch while off | evcc mode off, switch: the box stays at 0 A, charges again after mode PV |
-| 9 | Restart while charging | no car disconnect in evcc, no evcc errors, charging resumes |
+| 9 | Restart while charging | no car disconnect in evcc, no evcc errors, charging resumes; event log: restart requested on the web page, software start |
 | 10 | OTA while charging | firmware upload while charging: evcc gets cached values during the upload, then like a restart |
 | 11 | Restart without car | no phantom "car connected" in evcc |
 | 12 | Restart on 3p | the board boots on 3p again, no phases mismatch in evcc after the next car connect |
-| 13 | Unplug while charging | evcc sees the car leave, current drops to 0 |
+| 13 | Unplug while charging | evcc sees the car leave, current drops to 0; event log: charging stopped with energy, car disconnected |
 | 14 | Unplug during a restart | evcc sees the car leave after the restart |
 | 15 | Plug in during a switch | evcc sees the car after the switch and charges |
 | 16 | Two switches in a row | 1p and right after it 3p: the second request is kept and run after the first switch, board and evcc agree |
 | 17 | House load spike | +1.5 kW house load: evcc lowers the current and raises it again |
 | 18 | Mode off | evcc stops charging, wallbox max current 0 |
 | 19 | evcc restart | evcc process restarted while charging: takes over without errors |
-| 20 | evcc gone | evcc stopped while charging: within 30 s the board applies the failsafe current (0 A) and shows `[evcc timeout]`; charging resumes when evcc is back |
-| 21 | Wallbox dies while charging | silent wallbox while charging: its watchdog stops charging, the board shows `[wallbox not responding]` after 60 s, charging resumes without reboot when it answers again, the status page lists the outage |
-| 22 | Dead wallbox | silent wallbox after power-on: safety fault `0xE104`, recovery after a reboot |
-| 23 | Power loss while charging | board and simulated wallbox off for 15 s while charging on 3p: the status page reports a power-on restart, evcc charges again (`exception '11'` until the wallbox answers, `phases mismatch` once because the board boots on 1p) |
+| 20 | evcc gone | evcc stopped while charging: within 30 s the board applies the failsafe current (0 A) and shows `[evcc timeout]`; charging resumes when evcc is back; event log: evcc timeout and evcc back with duration |
+| 21 | Wallbox dies while charging | silent wallbox while charging: its watchdog stops charging, the board shows `[wallbox not responding]` after 60 s, charging resumes without reboot when it answers again, the status page lists the outage; event log: wallbox not responding and back with duration |
+| 22 | Dead wallbox | silent wallbox after power-on: safety fault `0xE104` (also in the event log), recovery after a reboot |
+| 23 | Power loss while charging | board and simulated wallbox off for 15 s while charging on 3p: the status page reports a power-on restart, evcc charges again (`exception '11'` until the wallbox answers, `phases mismatch` once because the board boots on 1p); the event log starts over with `start: power-on`, the contactor cycle counters are kept |
 | 24 | Power loss without car | the same without a car: no phantom car connect in evcc |
 | 25 | Disable after a switch | evcc switches to 1p and disables charging right after it: the current stays at 0 A |
 | 26 | Busy Modbus TCP | 5 minutes of fast requests to the bridge while charging: no false evcc timeout or wallbox outage, the current never drops to 0 A |
 | 27 | Parallel requests | evcc (register 4) and the web page request the other phases at the same moment: exactly one switch; then a phase request and a reboot at the same moment: the board restarts and comes back on the requested phases |
 | 28 | Write Multiple Registers | register 4 written with Write Multiple Registers instead of Write Single Register: an invalid value returns exception 3, a range across register 4 exception 2, a valid value switches the phases |
-| 29 | Concurrent RTU & web status | two Modbus TCP clients reading wallbox registers and `POST /status` for 30 s while charging, then 5 connections against the cap of 3 (evcc holds one): exactly 2 answer and the status page stays reachable; no false outage or evcc timeout, the current never drops to 0 A |
+| 29 | Concurrent RTU & web status | two Modbus TCP clients reading wallbox registers and `POST /status` for 30 s while charging, then 5 connections against the cap of 3 (evcc holds one): exactly 2 answer and the status page stays reachable; no false outage or evcc timeout, the current never drops to 0 A; event log: refused connection |
 
 ### Known problems
 
