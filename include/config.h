@@ -1,6 +1,7 @@
 #ifndef CONFIG_H
     #define CONFIG_H
     #include <cstdint>
+    #include <mutex>
     #include <nvs.h>
     #include <string>
 
@@ -30,6 +31,9 @@
 
     class Config{
         private:
+            // The web server writes the settings while the main loop and
+            // others read them; std::string copies need the lock.
+            mutable std::mutex _mutex;
             bool _nvsReady;
             nvs_handle_t _nvsHandle;
             uint32_t _switchDelay;

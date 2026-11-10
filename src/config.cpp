@@ -1,4 +1,5 @@
 #include "config.h"
+#include <mutex>
 
 #include <ctype.h>
 #include <algorithm>
@@ -244,180 +245,216 @@ void Config::writeString(const char *key, const std::string &value)
 }
 
 uint32_t Config::getSwitchDelay(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _switchDelay;
 }
 
 void Config::setSwitchDelay(uint32_t value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (!isSwitchDelayValid(value) || _switchDelay == value) return;
     _switchDelay = value;
     writeUInt32("switchDelay", _switchDelay);
 }
 
 bool Config::getEthDhcp(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _ethDhcp;
 }
 
 void Config::setEthDhcp(bool value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_ethDhcp == value) return;
     _ethDhcp = value;
     writeBool("ethDhcp", _ethDhcp);
 }
 
 std::string Config::getEthIp(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _ethIp;
 }
 
 void Config::setEthIp(const std::string &value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_ethIp == value) return;
     _ethIp = value;
     writeString("ethIp", _ethIp);
 }
 
 std::string Config::getEthGw(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _ethGw;
 }
 
 void Config::setEthGw(const std::string &value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_ethGw == value) return;
     _ethGw = value;
     writeString("ethGw", _ethGw);
 }
 
 std::string Config::getEthMask(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _ethMask;
 }
 
 void Config::setEthMask(const std::string &value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_ethMask == value) return;
     _ethMask = value;
     writeString("ethMask", _ethMask);
 }
 
 std::string Config::getEthDns1(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _ethDns1;
 }
 
 void Config::setEthDns1(const std::string &value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_ethDns1 == value) return;
     _ethDns1 = value;
     writeString("ethDns1", _ethDns1);
 }
 
 std::string Config::getEthDns2(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _ethDns2;
 }
 
 void Config::setEthDns2(const std::string &value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_ethDns2 == value) return;
     _ethDns2 = value;
     writeString("ethDns2", _ethDns2);
 }
 
 bool Config::getWifiDhcp(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _wifiDhcp;
 }
 
 void Config::setWifiDhcp(bool value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_wifiDhcp == value) return;
     _wifiDhcp = value;
     writeBool("wifiDhcp", _wifiDhcp);
 }
 
 std::string Config::getWifiIp(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _wifiIp;
 }
 
 void Config::setWifiIp(const std::string &value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_wifiIp == value) return;
     _wifiIp = value;
     writeString("wifiIp", _wifiIp);
 }
 
 std::string Config::getWifiGw(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _wifiGw;
 }
 
 void Config::setWifiGw(const std::string &value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_wifiGw == value) return;
     _wifiGw = value;
     writeString("wifiGw", _wifiGw);
 }
 
 std::string Config::getWifiMask(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _wifiMask;
 }
 
 void Config::setWifiMask(const std::string &value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_wifiMask == value) return;
     _wifiMask = value;
     writeString("wifiMask", _wifiMask);
 }
 
 std::string Config::getWifiDns1(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _wifiDns1;
 }
 
 void Config::setWifiDns1(const std::string &value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_wifiDns1 == value) return;
     _wifiDns1 = value;
     writeString("wifiDns1", _wifiDns1);
 }
 
 std::string Config::getWifiDns2(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _wifiDns2;
 }
 
 void Config::setWifiDns2(const std::string &value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_wifiDns2 == value) return;
     _wifiDns2 = value;
     writeString("wifiDns2", _wifiDns2);
 }
 
 bool Config::getWifiCredsSet(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _wifiCredsSet;
 }
 
 void Config::setWifiCredsSet(bool value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_wifiCredsSet == value) return;
     _wifiCredsSet = value;
     writeBool("wifiCredsSet", _wifiCredsSet);
 }
 
 bool Config::getWifiResetPending(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _wifiResetPending;
 }
 
 void Config::setWifiResetPending(bool value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_wifiResetPending == value) return;
     _wifiResetPending = value;
     writeBool(KEY_WIFI_RESET_PENDING, _wifiResetPending);
 }
 
 bool Config::getModbusEnabled(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _modbusEnabled;
 }
 
 void Config::setModbusEnabled(bool value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_modbusEnabled == value) return;
     _modbusEnabled = value;
     writeBool("modbusEnabled", _modbusEnabled);
 }
 
 bool Config::getTelnetEnabled(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _telnetEnabled;
 }
 
 void Config::setTelnetEnabled(bool value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (_telnetEnabled == value) return;
     _telnetEnabled = value;
     writeBool("telnetEnabled", _telnetEnabled);
 }
 
 std::string Config::getHostname(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _hostname;
 }
 
 void Config::setHostname(const std::string &value){
+    std::lock_guard<std::mutex> lock(_mutex);
     if (!isHostnameValid(value)) return;
     std::string sanitized = sanitizeHostname(value);
     if (_hostname == sanitized) return;
@@ -426,11 +463,13 @@ void Config::setHostname(const std::string &value){
 }
 
 std::string Config::getNtpServer(){
+    std::lock_guard<std::mutex> lock(_mutex);
     return _ntpServer;
 }
 
 // empty restores the default server
 void Config::setNtpServer(const std::string &value){
+    std::lock_guard<std::mutex> lock(_mutex);
     const std::string server = value.empty() ? std::string(DEFAULT_NTP_SERVER) : value;
     if (!isNtpServerValid(server) || _ntpServer == server) return;
     _ntpServer = server;
