@@ -647,7 +647,10 @@ static esp_err_t handleConfigPost(httpd_req_t *req)
   std::vector<KeyValue> params;
   if (!readForm(req, params)) return ESP_FAIL; // closes the connection
 
-  if (hasParam(params, "sd")) {
+  // Check everything first: an error must not leave half the form saved.
+  const bool hasDelay = hasParam(params, "sd");
+  uint32_t delay = 0;
+  if (hasDelay) {
     const std::string text = findParam(params, "sd");
     char *end = nullptr;
     const unsigned long value = strtoul(text.c_str(), &end, 10);
@@ -656,35 +659,21 @@ static esp_err_t handleConfigPost(httpd_req_t *req)
       redirect(req, "/config?err=sd");
       return ESP_OK;
     }
-    const uint32_t delay = (uint32_t)value;
-    s_config->setSwitchDelay(delay);
-    s_phase_switch->setSwitchDelay(delay);
-    dbgln("[webserver] saved switch delay");
+    delay = (uint32_t)value;
   }
 
-  if (hasParam(params, "hostname")) {
-    std::string hostname = findParam(params, "hostname");
-    if (!Config::isHostnameValid(hostname)) {
-      redirect(req, "/config?err=hostname");
-      return ESP_OK;
-    }
-    s_config->setHostname(hostname);
-    if (s_config->getHostname().length() > 0) {
-      wifiNativeSetHostname(s_config->getHostname().c_str());
-#ifdef BOARD_DINGTIAN
-      ethernetSetHostname(s_config->getHostname().c_str());
-#endif
-    }
+  const bool hasHostname = hasParam(params, "hostname");
+  const std::string hostname = findParam(params, "hostname");
+  if (hasHostname && !Config::isHostnameValid(hostname)) {
+    redirect(req, "/config?err=hostname");
+    return ESP_OK;
   }
 
-  if (hasParam(params, "ntp")) {
-    std::string ntp = findParam(params, "ntp");
-    if (!Config::isNtpServerValid(ntp)) {
-      redirect(req, "/config?err=ntp");
-      return ESP_OK;
-    }
-    s_config->setNtpServer(ntp);
-    timeSyncSetServer(s_config->getNtpServer());
+  const bool hasNtp = hasParam(params, "ntp");
+  const std::string ntp = findParam(params, "ntp");
+  if (hasNtp && !Config::isNtpServerValid(ntp)) {
+    redirect(req, "/config?err=ntp");
+    return ESP_OK;
   }
 
   const bool wifiDhcp = hasParam(params, "wifimode") ? (findParam(params, "wifimode") == "dhcp") : s_config->getWifiDhcp();
@@ -711,6 +700,26 @@ static esp_err_t handleConfigPost(httpd_req_t *req)
     }
   }
 #endif
+
+  // all checks passed: apply
+  if (hasDelay) {
+    s_config->setSwitchDelay(delay);
+    s_phase_switch->setSwitchDelay(delay);
+    dbgln("[webserver] saved switch delay");
+  }
+  if (hasHostname) {
+    s_config->setHostname(hostname);
+    if (s_config->getHostname().length() > 0) {
+      wifiNativeSetHostname(s_config->getHostname().c_str());
+#ifdef BOARD_DINGTIAN
+      ethernetSetHostname(s_config->getHostname().c_str());
+#endif
+    }
+  }
+  if (hasNtp) {
+    s_config->setNtpServer(ntp);
+    timeSyncSetServer(s_config->getNtpServer());
+  }
 
   if (hasParam(params, "wifimode")) {
     s_config->setWifiDhcp(wifiDhcp);
