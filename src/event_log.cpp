@@ -226,6 +226,8 @@ static std::string eventText(const EventEntry &e)
                (unsigned long)e.value);
       return buf;
     case EventType::LogCleared: return "event log cleared on the web page";
+    case EventType::ChargePaused: return "charging paused, the car waits for current";
+    case EventType::ChargeResumed: return "charging resumed";
   }
   return "unknown event";
 }

@@ -292,29 +292,37 @@ void PhaseSwitch::logCarState(){
     status = _inputRegister[5];
     energyWh = (uint32_t)_inputRegister[17] << 16 | _inputRegister[18];
   }
+  // Classes: 0 no car, 1 connected, 2 charging, 3 charge paused. C1 (6)
+  // means the car asks for current and gets none, e.g. evcc paused the
+  // charge for lack of PV; it only counts as a pause of a running charge.
+  const uint8_t previous = eventLogCarClass();
+  const bool inCharge = previous == 2 || previous == 3;
   uint8_t carClass;
   if (status == 2 || status == 3) carClass = 0;
   else if (status == 4 || status == 5) carClass = 1;
-  else if (status >= 6 && status <= 8) carClass = 2;
+  else if (status == 6) carClass = inCharge || previous == 0xFF ? 3 : 1;
+  else if (status == 7 || status == 8) carClass = 2;
   else return; // error, locked: no change
 
-  const uint8_t previous = eventLogCarClass();
   if (carClass == previous) return;
   // After a phase switch or a start the car waits until evcc sets the
-  // current again; that is no end of the charge.
-  if (previous == 2 && carClass == 1 && !pastDeadline(_carQuietUntilMs)) return;
+  // current again; that is neither a pause nor the end of the charge.
+  if (previous == 2 && (carClass == 1 || carClass == 3) && !pastDeadline(_carQuietUntilMs)) return;
   uint32_t chargeStartWh = eventLogChargeStartWh();
   if (previous != 0xFF) {
-    if (previous == 2) {
+    if (inCharge && carClass < 2) {
+      // the energy of the whole charge, pauses included
       const uint32_t energy = chargeStartWh && energyWh >= chargeStartWh
         ? energyWh - chargeStartWh : EVENT_VALUE_UNKNOWN;
       eventLog(EventType::ChargeEnd, 0, 0, 0, energy);
     }
     if (previous == 0) eventLog(EventType::CarConnected);
     if (carClass == 0) eventLog(EventType::CarDisconnected);
-    if (carClass == 2) eventLog(EventType::ChargeStart);
+    if (carClass == 2 && !inCharge) eventLog(EventType::ChargeStart);
+    if (carClass == 2 && previous == 3) eventLog(EventType::ChargeResumed);
+    if (carClass == 3) eventLog(EventType::ChargePaused);
   }
-  if (carClass == 2 && previous != 2) chargeStartWh = previous == 0xFF ? 0 : energyWh;
+  if (carClass == 2 && !inCharge) chargeStartWh = previous == 0xFF ? 0 : energyWh;
   eventLogSetCarState(carClass, chargeStartWh);
 }
 

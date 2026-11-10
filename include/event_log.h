@@ -20,6 +20,8 @@
         SafetyFault,        // value = fault code
         ModbusRefused,      // value = refused connections since the last entry
         LogCleared,         // the log was cleared on the web page
+        ChargePaused,       // the car waits for current (status C1)
+        ChargeResumed,
     };
 
     enum class RestartSource : uint8_t { WebPage = 1, FirmwareUpdate, WifiSettings };
@@ -40,7 +42,7 @@
     std::string eventLogHtml();
 
     // Car and charge state across restarts, for the car and charge events.
-    // carClass: 0 no car, 1 connected, 2 charging, 0xFF unknown
+    // carClass: 0 no car, 1 connected, 2 charging, 3 charge paused, 0xFF unknown
     uint8_t eventLogCarClass();
     uint32_t eventLogChargeStartWh();
     void eventLogSetCarState(uint8_t carClass, uint32_t chargeStartWh);
