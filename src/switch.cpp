@@ -218,6 +218,7 @@ PhaseSwitch::PhaseSwitch()
   ,_controllerAddr(0)
   ,_restartDeadlineMs(0)
   ,_restartStopWritten(false)
+  ,_cachedCurrentWrites(0)
   ,_bothFeedbackSinceMs(0)
   ,_invalidFeedbackSinceMs(0)
 {}
@@ -729,8 +730,10 @@ void PhaseSwitch::loop(){
     // again while its target stays the same. A current from before the switch
     // is capped to the minimum: it was meant for the old phase count.
     uint16_t restartCurrent = 0;
+    uint32_t writesSeen;
     {
       std::lock_guard<std::mutex> cacheLock(_cacheMutex);
+      writesSeen = _cachedCurrentWrites;
       if (_phaseSwitchRequested) {
         uint16_t cached = _holdingRegister[HEC_REG_MAX_CURRENT - HOLDING_REG_OFFSET];
         if (_currentWrittenDuringSwitch) {
@@ -748,7 +751,6 @@ void PhaseSwitch::loop(){
       _delay = 500;
       return;
     }
-    cacheHolding(HEC_REG_MAX_CURRENT, &restartCurrent, 1);
     // Release the remote lock only once the restart current is in place.
     if (masterWriteHolding(HEC_REG_REMOTE_LOCK, 1) != ESP_OK) {
       checkWallboxSilent();
@@ -757,12 +759,39 @@ void PhaseSwitch::loop(){
       return;
     }
 
-    {
-      std::lock_guard<std::mutex> cacheLock(_cacheMutex);
-      _phaseSwitchRequested = false;
-      _currentWrittenDuringSwitch = false;
+    // evcc may have written a new current into the cache while the two
+    // writes above ran: send the newest one before leaving the cache. The
+    // state changes under the cache lock, so no later write is lost.
+    // If a write fails, or a client keeps writing for more than three rounds,
+    // Delay runs again and starts over from the cache.
+    for (int round = 0; ; round++) {
+      if (round == 3) {
+        _previous = nowMs();
+        _delay = 100;
+        return;
+      }
+      uint16_t newer;
+      {
+        std::lock_guard<std::mutex> cacheLock(_cacheMutex);
+        if (_cachedCurrentWrites == writesSeen) {
+          _holdingRegister[HEC_REG_MAX_CURRENT - HOLDING_REG_OFFSET] = restartCurrent;
+          _phaseSwitchRequested = false;
+          _currentWrittenDuringSwitch = false;
+          _state = State::Unlocking;
+          break;
+        }
+        writesSeen = _cachedCurrentWrites;
+        newer = _holdingRegister[HEC_REG_MAX_CURRENT - HOLDING_REG_OFFSET];
+      }
+      ESP_LOGI(TAG, "evcc wrote %u.%u A meanwhile, sending it", newer / 10, newer % 10);
+      if (masterWriteHolding(HEC_REG_MAX_CURRENT, newer) != ESP_OK) {
+        checkWallboxSilent();
+        _previous = nowMs();
+        _delay = 500;
+        return;
+      }
+      restartCurrent = newer;
     }
-    _state = State::Unlocking;
     _unlockDeadlineMs = nowMs() + UNLOCK_CONFIRM_TIMEOUT_MS;
     ESP_LOGI(TAG, "restored registers, max current %u.%u A", restartCurrent / 10, restartCurrent % 10);
     return;
@@ -818,10 +847,13 @@ void PhaseSwitch::handleRestart(){
   if (_state != State::Restarting) {
     // During a phase switch the car may still draw current until the
     // contactors are off: in SwitchPhases the 0 A write may not have gone
-    // through yet, in WaitingForZero the car is still ramping down. In the
-    // later states the contactors are off or the wallbox is not charging yet.
+    // through yet, in WaitingForZero the car is still ramping down. Delay
+    // may already have unlocked the wallbox with a current when it retries
+    // sending evcc's newest current. In the other states the contactors are
+    // off or the wallbox is not charging yet.
     const bool mayCharge = _state == State::Running || _state == State::Unlocking
-      || _state == State::SwitchPhases || _state == State::WaitingForZero;
+      || _state == State::SwitchPhases || _state == State::WaitingForZero
+      || _state == State::Delay;
     if (_state == State::Running) rememberCarState();
     if (!mayCharge || !_master_handle || hasSafetyFault()) {
       ESP_LOGI(TAG, "restarting");
@@ -1631,16 +1663,26 @@ bool PhaseSwitch::handleWriteHolding(uint8_t, uint16_t addr, uint16_t value, std
     return true;
   }
   // While Unlocking the wallbox answers again; only reads still come from the cache.
+  bool cached = false;
   if (servesFromCache() && _state != State::Unlocking) {
     std::lock_guard<std::mutex> lock(_cacheMutex);
-    if (addr < HOLDING_REG_OFFSET || (addr - HOLDING_REG_OFFSET) >= _holdingRegister.size()) {
-      buildException(FC_WRITE_HOLDING, EX_ILLEGAL_DATA_ADDRESS, responsePdu);
-      return true;
+    // The main loop goes from Delay to Unlocking under this lock; a write
+    // that lost that race goes to the wallbox instead.
+    if (_state != State::Unlocking) {
+      cached = true;
+      if (addr < HOLDING_REG_OFFSET || (addr - HOLDING_REG_OFFSET) >= _holdingRegister.size()) {
+        buildException(FC_WRITE_HOLDING, EX_ILLEGAL_DATA_ADDRESS, responsePdu);
+        return true;
+      }
+      _holdingRegister[addr - HOLDING_REG_OFFSET] = value;
+      if (addr == HEC_REG_MAX_CURRENT) {
+        _cachedCurrentWrites++;
+        if (_phaseSwitchRequested) _currentWrittenDuringSwitch = true;
+      }
     }
-    _holdingRegister[addr - HOLDING_REG_OFFSET] = value;
-    if (_phaseSwitchRequested && addr == HEC_REG_MAX_CURRENT) {
-      _currentWrittenDuringSwitch = true;
-    }
+  }
+  if (cached) {
+    // acknowledged from the cache
   } else if (_wallboxSilent) {
     buildException(FC_WRITE_HOLDING, EX_GATEWAY_TARGET_FAILED, responsePdu);
     return true;
@@ -1680,19 +1722,28 @@ bool PhaseSwitch::handleWriteMultiple(uint8_t, uint16_t addr, uint16_t count, co
     return true;
   }
   // While Unlocking the wallbox answers again; only reads still come from the cache.
+  bool cached = false;
   if (servesFromCache() && _state != State::Unlocking) {
     std::lock_guard<std::mutex> lock(_cacheMutex);
-    if (addr < HOLDING_REG_OFFSET || (addr - HOLDING_REG_OFFSET + count) > _holdingRegister.size()) {
-      buildException(FC_WRITE_MULTIPLE, EX_ILLEGAL_DATA_ADDRESS, responsePdu);
-      return true;
+    // see handleWriteHolding
+    if (_state != State::Unlocking) {
+      cached = true;
+      if (addr < HOLDING_REG_OFFSET || (addr - HOLDING_REG_OFFSET + count) > _holdingRegister.size()) {
+        buildException(FC_WRITE_MULTIPLE, EX_ILLEGAL_DATA_ADDRESS, responsePdu);
+        return true;
+      }
+      size_t idx = addr - HOLDING_REG_OFFSET;
+      for (uint16_t i = 0; i < count; i++) {
+        _holdingRegister[idx + i] = values[i];
+      }
+      if (addr <= HEC_REG_MAX_CURRENT && HEC_REG_MAX_CURRENT < addr + count) {
+        _cachedCurrentWrites++;
+        if (_phaseSwitchRequested) _currentWrittenDuringSwitch = true;
+      }
     }
-    size_t idx = addr - HOLDING_REG_OFFSET;
-    for (uint16_t i = 0; i < count; i++) {
-      _holdingRegister[idx + i] = values[i];
-    }
-    if (_phaseSwitchRequested && addr <= HEC_REG_MAX_CURRENT && HEC_REG_MAX_CURRENT < addr + count) {
-      _currentWrittenDuringSwitch = true;
-    }
+  }
+  if (cached) {
+    // acknowledged from the cache
   } else if (_wallboxSilent) {
     buildException(FC_WRITE_MULTIPLE, EX_GATEWAY_TARGET_FAILED, responsePdu);
     return true;
