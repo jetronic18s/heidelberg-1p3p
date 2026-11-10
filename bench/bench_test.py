@@ -989,6 +989,46 @@ def test_concurrent_rtu_and_status(b):
     b.check_log()
 
 
+
+def test_clear_event_log(b):
+    """Clear event log: only by POST, survives a restart, counters untouched"""
+    cycles = b.esp_cycles()
+    if len(b.esp_events()) < 2:
+        b.esp_reboot()  # make sure there is something to clear
+        b.wait_esp_running()
+    before = len(b.esp_events())
+    try:
+        urllib.request.urlopen(b.esp + "/events", timeout=5).read()
+    except urllib.error.HTTPError:
+        pass
+    if len(b.esp_events()) < before:
+        raise TestFailure("GET /events cleared the event log")
+    req = urllib.request.Request(b.esp + "/events", data=b"", method="POST")
+    urllib.request.urlopen(req, timeout=5).read()
+    events = b.esp_events()
+    b.note(f"{before} events, after clearing: {events}")
+    if len(events) != 1 or "event log cleared on the web page" not in events[0]:
+        raise TestFailure(f"the event log was not cleared: {events}")
+    if b.esp_cycles() != cycles:
+        raise TestFailure(f"clearing changed the contactor counters: {cycles} -> {b.esp_cycles()}")
+    b.mark_log()
+    b.esp_reboot()
+    b.wait_esp_running()
+    b.settle(10)
+    events = b.esp_events()
+    b.note("events after the restart: " + "; ".join(e.split(" | ", 1)[-1] for e in reversed(events)))
+    if "event log cleared on the web page" not in events[-1]:
+        raise TestFailure("the cleared event log did not survive the restart")
+    for pattern in ("restart requested on the web page", "start: software"):
+        if not any(pattern in e for e in events):
+            raise TestFailure(f"no event /{pattern}/ after the restart")
+    # the restart switches a relay on again, which counts
+    after = b.esp_cycles()
+    if not after or after[2] != cycles[2] or after[0] < cycles[0] or after[1] < cycles[1]:
+        raise TestFailure(f"contactor counters lost in the restart: {cycles} -> {after}")
+    b.check_log(allowed=ALLOWED_ON_RESTART)
+
+
 TESTS = [
     test_boot, test_pv_charging, test_auto_1p, test_auto_3p, test_manual_switch,
     test_current_after_switch, test_switch_without_evcc, test_switch_while_disabled,
@@ -997,7 +1037,7 @@ TESTS = [
     test_house_spike, test_mode_off, test_evcc_restart, test_evcc_down, test_wallbox_dies,
     test_dead_wallbox, test_power_loss_charging, test_power_loss_no_car,
     test_disable_after_switch, test_busy_bridge, test_parallel_requests,
-    test_write_multiple_phases, test_concurrent_rtu_and_status,
+    test_write_multiple_phases, test_concurrent_rtu_and_status, test_clear_event_log,
 ]
 
 # tests that end in a safety fault on purpose

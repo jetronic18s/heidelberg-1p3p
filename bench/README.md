@@ -259,6 +259,7 @@ known problem.
 | 27 | Parallel requests | evcc (register 4) and the web page request the other phases at the same moment: exactly one switch; then a phase request and a reboot at the same moment: the board restarts and comes back on the requested phases |
 | 28 | Write Multiple Registers | register 4 written with Write Multiple Registers instead of Write Single Register: an invalid value returns exception 3, a range across register 4 exception 2, a valid value switches the phases |
 | 29 | Concurrent RTU & web status | two Modbus TCP clients reading wallbox registers and `POST /status` for 30 s while charging, then 5 connections against the cap of 3 (evcc holds one): exactly 2 answer and the status page stays reachable; no false outage or evcc timeout, the current never drops to 0 A; event log: refused connection |
+| 30 | Clear event log | `GET /events` does not clear the log, `POST /events` leaves only `event log cleared on the web page`; after a reboot that entry is still the oldest, followed by the restart entries; clearing leaves the contactor cycle counters unchanged |
 
 ### Known problems
 
