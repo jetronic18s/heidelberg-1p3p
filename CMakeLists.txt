@@ -5,6 +5,7 @@ set(IDF_COMPONENT_MANAGER 1)
 
 set(EXTRA_COMPONENT_DIRS
     "${CMAKE_SOURCE_DIR}/lib/eth_phy_jl1101"
+    "${CMAKE_SOURCE_DIR}/lib/esp-modbus"
 )
 
 # Firmware version from git tags, also embedded in the app description
