@@ -457,6 +457,7 @@ void PhaseSwitch::beginModbus(){
 }
 
 static constexpr int64_t RTU_MIN_ANSWER_US = 5000;
+static constexpr uint32_t RTU_ERROR_PAUSE_MS = 200;
 
 // All RTU requests go through _rtuBuffer, never through the caller's
 // buffer: see the comment at _rtuBuffer.
@@ -490,6 +491,27 @@ esp_err_t PhaseSwitch::rtuRequest(uint8_t command, uint16_t addr, uint16_t count
             err = ESP_ERR_INVALID_RESPONSE;
         }
         if (err == ESP_OK && dest) std::copy(_rtuBuffer, _rtuBuffer + count, dest);
+        // After any error a late answer may still be on its way, also the
+        // answer to this request when it failed early (e.g. a late foreign
+        // frame came in first). RTU has no transaction id: an answer in the
+        // next request's window is taken as its answer. Keep the bus quiet
+        // until RTU_ERROR_PAUSE_MS after this request's respond timeout; the
+        // next request flushes the receive buffer before sending.
+        // esp-modbus's own cooldown only follows a timeout.
+        // start is taken before the request waited for the library; the
+        // frame may have left later (flash writes during an OTA stall the
+        // Modbus task). A timeout comes the respond time after the frame
+        // left, so RTU_ERROR_PAUSE_MS from now is enough. Any other error
+        // may come right after a late send: then wait the full respond time
+        // plus RTU_ERROR_PAUSE_MS from now.
+        if (err != ESP_OK) {
+            const int64_t quietUntil = start +
+                (int64_t)(CONFIG_FMB_MASTER_TIMEOUT_MS_RESPOND + RTU_ERROR_PAUSE_MS) * 1000;
+            const int64_t minPause = (int64_t)(err == ESP_ERR_TIMEOUT ? RTU_ERROR_PAUSE_MS
+                : CONFIG_FMB_MASTER_TIMEOUT_MS_RESPOND + RTU_ERROR_PAUSE_MS) * 1000;
+            const int64_t remaining = std::max<int64_t>(quietUntil - esp_timer_get_time(), minPause);
+            vTaskDelay(pdMS_TO_TICKS((uint32_t)(remaining / 1000)) + 1);
+        }
     }
     _rtuPendingRequestCount--;
     _rtuMessageCount++;
