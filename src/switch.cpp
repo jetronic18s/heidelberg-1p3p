@@ -1300,6 +1300,16 @@ uint16_t PhaseSwitch::getInputRegister(size_t reg){
   return _inputRegister[reg];
 }
 
+// For the status page: read the wallbox now, but only in Running. During a
+// switch, a restart or an update the cache holds what evcc wrote meanwhile
+// and must not be overwritten with the wallbox's values. The state lock
+// keeps a switch from starting halfway through.
+bool PhaseSwitch::refreshCachedRegisters(){
+  std::lock_guard<std::mutex> lock(_stateMutex);
+  if (_state != State::Running || _updateInProgress) return false;
+  return updateCachedRegisters();
+}
+
 bool PhaseSwitch::updateCachedRegisters(){
   if (!_master_handle) return false;
   uint16_t input[15];

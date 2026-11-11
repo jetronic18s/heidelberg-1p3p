@@ -517,7 +517,7 @@ static esp_err_t handleStatusGet(httpd_req_t *req)
           "<button class=\"r\">Clear event log</button></form><p></p>";
 
   if (s_config->getModbusEnabled()) {
-    body += "<form method=\"post\"><button class=\"r\">Update register</button></form><p></p>";
+    body += "<form method=\"post\"><button>Refresh status</button></form><p></p>";
   } else {
     body += "<p class=\"e\">Modbus disabled in config; register update not available.</p>";
   }
@@ -530,7 +530,7 @@ static esp_err_t handleStatusGet(httpd_req_t *req)
 
 static esp_err_t handleStatusPost(httpd_req_t *req)
 {
-  s_phase_switch->updateCachedRegisters();
+  s_phase_switch->refreshCachedRegisters();
   redirect(req, "/status");
   return ESP_OK;
 }

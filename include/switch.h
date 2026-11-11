@@ -238,5 +238,6 @@
             uint16_t getHoldingRegister(size_t reg);
             uint16_t getInputRegister(size_t reg);
             bool updateCachedRegisters();
+            bool refreshCachedRegisters(); // status page, Running only
     };
 #endif /* SWITCH_H */
