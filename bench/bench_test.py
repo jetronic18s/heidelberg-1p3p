@@ -318,14 +318,16 @@ class Bench:
 
     def check_log(self, allowed=(), forbidden=()):
         """Fail on unexpected evcc log lines. Patterns in allowed may also
-        lift a FORBIDDEN one, for tests that provoke it on purpose."""
+        lift a FORBIDDEN one for the lines they match, for tests that provoke
+        it on purpose. Patterns in forbidden always win."""
         problems = []
-        always_forbidden = [p for p in FORBIDDEN if p not in allowed]
         for line in self.log_since_mark():
-            if any(re.search(p, line) for p in always_forbidden + list(forbidden)):
+            is_allowed = any(re.search(p, line) for p in ALLOWED_ALWAYS + list(allowed))
+            if any(re.search(p, line) for p in forbidden):
                 problems.append(line)
-            elif re.search(r"\b(ERROR|WARN|FATAL)\b", line) and not any(
-                    re.search(p, line) for p in ALLOWED_ALWAYS + list(allowed)):
+            elif any(re.search(p, line) for p in FORBIDDEN) and not is_allowed:
+                problems.append(line)
+            elif re.search(r"\b(ERROR|WARN|FATAL)\b", line) and not is_allowed:
                 problems.append(line)
         if problems:
             raise TestFailure("unexpected evcc log lines:\n      " + "\n      ".join(problems[:10]))
