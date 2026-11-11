@@ -146,6 +146,14 @@ bool mb_port_event_res_take(mb_port_base_t *inst, uint32_t timeout)
     BaseType_t status = pdFALSE;
     status = xSemaphoreTake(inst->event_obj->resource_hdl, timeout);
     ESP_LOGD(TAG, "%s, mb take resource, (%" PRIu32 " ticks).", inst->descr.parent_name, timeout);
+    if (status == pdTRUE && inst->event_obj->event_group_hdl) {
+        // heidelberg-1p3p patch: a new request starts, so any result bit
+        // still set belongs to an earlier transaction. Clear it, or the
+        // request returns that stale result before its own answer.
+        // Assumes requests are serialized (heidelberg-1p3p: _rtuMutex), so
+        // no earlier waiter is still about to read its bit.
+        (void)xEventGroupClearBits(inst->event_obj->event_group_hdl, MB_EVENT_REQ_MASK);
+    }
     return (bool)status;
 }
 

@@ -657,9 +657,13 @@ mb_err_enum_t mbm_poll(mb_base_t *inst)
                     }
                 }
             } else {
-                mb_port_event_set_err_type(MB_OBJ(inst->port_obj), EV_ERROR_EXECUTE_FUNCTION);
-                (void)mb_port_event_post(MB_OBJ(inst->port_obj), EVENT(EV_ERROR_PROCESS));
-                ESP_LOGE(TAG, MB_OBJ_FMT", execution is expired.", MB_OBJ_PARENT(inst));
+                // heidelberg-1p3p patch: the transaction already ended (its
+                // respond timeout was processed first). Drop the answer. An
+                // EV_ERROR_PROCESS here would set a result bit nobody waits
+                // for, and the next request would return at once with it
+                // while its own answer is still pending: every following
+                // request then gets the result of the previous one.
+                ESP_LOGE(TAG, MB_OBJ_FMT", execution is expired, answer dropped.", MB_OBJ_PARENT(inst));
             }
             break;
 
