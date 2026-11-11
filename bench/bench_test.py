@@ -1238,6 +1238,54 @@ def test_silent_during_switch(b):
                          r"charger out of sync", r"phases mismatch"])
 
 
+def test_late_answers(b):
+    """Late wallbox answers (after the 500 ms timeout): no wrong values, no crash"""
+    b.start_charging(pv=7000, phases=3)
+    def crashes():
+        match = re.search(r"Crashes = (\d+) since power-on", b.esp_status_page())
+        return int(match.group(1)) if match else 0
+    crashes_before = crashes()
+    current = b.sim_state()["max_current"]
+    late_before = b.sim_state()["late_sent"]
+    count = 60
+    # LATE="<ms> <jitter>" tries other delays, e.g. "375 75" or "700 100"
+    delay, jitter = (int(v) for v in os.environ.get("LATE", "500 15").split())
+    b.mark_events()
+    b.mark_log()
+    b.sim(f"late {delay} {count} {jitter}")
+    try:
+        b.note(f"the next {count} answers come {delay - jitter}-{delay + jitter} ms late")
+        b.wait(lambda: b.sim_state()["late_sent"] - late_before >= count, 240,
+               f"{count} late answers sent")
+    finally:
+        b.sim("late 0 0")
+    b.settle(10)
+    restarts = [e for e in b.events_since_mark() if "start:" in e]
+    if restarts:
+        raise TestFailure(f"the board restarted: {restarts}")
+    if crashes() != crashes_before:
+        raise TestFailure(f"crash recorded: {crashes_before} -> {crashes()}")
+    b.wait(lambda: b.charging(3), 120, "evcc charging on 3p")
+    state = b.sim_state()
+    if state["lock"] != 1 or state["max_current"] < 6:
+        raise TestFailure(f"wallbox left in a wrong state: lock {state['lock']}, "
+                          f"max current {state['max_current']} A (before {current} A)")
+    # single answers time out: evcc may see exception 4 or a timeout, but
+    # never a value that belongs to another request (e.g. status 7 read as
+    # 7 W charge power). Covered up to 700 ms after the request (respond
+    # timeout + pause), RTU cannot tell later answers apart.
+    allowed = [r"exception '4'", r"i/o timeout"]
+    # A write whose answer came too late failed for evcc, but the wallbox
+    # took it: evcc then measures the new current while it still expects the
+    # old one, and warns once. No wrong value: RTU cannot tell a lost answer
+    # from a lost request.
+    if any(re.search(r"set charge current limit .*exception '4'", line) for line in b.log_since_mark()):
+        allowed.append(r"charger logic error: current mismatch")
+    b.check_log(allowed=allowed,
+                forbidden=[r"invalid status", r"implausible", r"exception '2'", r"exception '3'",
+                           r"charge power: [1-9]\d?W"])
+
+
 TESTS = [
     test_boot, test_pv_charging, test_auto_1p, test_auto_3p, test_manual_switch,
     test_current_after_switch, test_switch_without_evcc, test_switch_while_disabled,
@@ -1248,7 +1296,7 @@ TESTS = [
     test_disable_after_switch, test_busy_bridge, test_parallel_requests,
     test_write_multiple_phases, test_concurrent_rtu_and_status, test_clear_event_log,
     test_charge_pause, test_restart_during_switch, test_web_robustness,
-    test_silent_during_switch,
+    test_silent_during_switch, test_late_answers,
 ]
 
 # tests that end in a safety fault on purpose

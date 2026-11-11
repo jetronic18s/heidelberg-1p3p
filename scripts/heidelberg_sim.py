@@ -22,6 +22,8 @@ Behaviour:
 Commands on stdin or on the control port (e.g. `echo car on | nc localhost 8502`):
   car on|off        connect or disconnect the car
   silent on|off     stop answering (simulates a dead wallbox)
+  late <ms> <n> [j] answer the next n requests <ms> +- j ms late (around the
+                    ESP32's 500 ms timeout, like a delayed answer during an OTA)
   phases auto|1|3|0 power from the ESP32 feedback, or force 1p/3p/off
   pv <W> / house <W> set PV power and house load for --grid-file
   status            log the current state
@@ -33,6 +35,7 @@ an error).
 """
 import argparse
 import json
+import random
 import os
 import re
 import socket
@@ -78,6 +81,10 @@ class Wallbox:
         self.ramp_until = None
         self.cuts_under_load = 0
         self.silent = False
+        self.late_ms = 0
+        self.late_count = 0
+        self.late_jitter = 0
+        self.late_sent = 0
         self.forced_phases = None if args.esp_url else 1
         self.esp_phases = 0
         self.powered_phases = 0
@@ -299,6 +306,7 @@ class Wallbox:
             "answering": bool(self.answering()),
             "car": self.car,
             "silent": self.silent,
+            "late_sent": self.late_sent,
             "status": regs[5],
             "lock": self.holding[259],
             "max_current": self.holding[261] / 10,
@@ -329,6 +337,12 @@ class Wallbox:
             elif words[:1] == ["wait"] and words[1:] in (["on"], ["off"]):
                 self.car_waits = words[1] == "on"
                 log(f"car waits for current in C1: {words[1]}")
+            elif words[:1] == ["late"] and len(words) in (3, 4) and all(w.isdigit() for w in words[1:]):
+                self.late_ms = int(words[1])
+                self.late_count = int(words[2])
+                self.late_jitter = int(words[3]) if len(words) == 4 else 0
+                log(f"answering the next {self.late_count} requests "
+                    f"{self.late_ms} +- {self.late_jitter} ms late")
             elif words[:1] == ["silent"] and words[1:] in (["on"], ["off"]):
                 self.silent = words[1] == "on"
                 log(f"silent {words[1]}")
@@ -406,6 +420,16 @@ def serve_rtu(box, port):
                 answer = "tx " + with_crc(response).hex(" ") if response else "no answer"
                 log(f"rx {frame.hex(' ')} -> {answer}")
             if response is not None:
+                with box.lock:
+                    delay = (box.late_ms + random.uniform(-box.late_jitter, box.late_jitter)) / 1000 \
+                        if box.late_count > 0 else 0
+                    if delay:
+                        box.late_count -= 1
+                        box.late_sent += 1
+                if delay:
+                    time.sleep(delay)
+                    if box.args.verbose:
+                        log(f"answer sent {delay * 1000:.0f} ms late")
                 last_tx = with_crc(response)
                 ser.write(last_tx)
                 ser.flush()
