@@ -456,97 +456,59 @@ void PhaseSwitch::beginModbus(){
     startTcpBridge();
 }
 
-esp_err_t PhaseSwitch::masterReadInput(uint16_t addr, uint16_t count, uint16_t* dest) {
+// All RTU requests go through _rtuBuffer, never through the caller's
+// buffer: see the comment at _rtuBuffer.
+esp_err_t PhaseSwitch::rtuRequest(uint8_t command, uint16_t addr, uint16_t count,
+                                  const uint16_t *src, uint16_t *dest, const char *name) {
     if (!_master_handle) return ESP_ERR_INVALID_STATE;
+    // Modbus limits: 125 registers per read, 123 per write multiple
+    const uint16_t maxCount = command == FC_WRITE_MULTIPLE ? 123 : RTU_MAX_REGS;
+    if (count == 0 || count > maxCount) {
+        ESP_LOGE(TAG, "%s(addr=%u, count=%u): invalid count", name, addr, count);
+        return ESP_ERR_INVALID_ARG;
+    }
     mb_param_request_t req = {};
     req.slave_addr = _serverId;
-    req.command = 4; // Read Input Registers
+    req.command = command;
     req.reg_start = addr;
     req.reg_size = count;
     _rtuPendingRequestCount++;
     esp_err_t err;
     {
         std::lock_guard<FifoMutex> lock(_rtuMutex);
-        err = mbc_master_send_request(_master_handle, &req, dest);
+        if (src) std::copy(src, src + count, _rtuBuffer);
+        err = mbc_master_send_request(_master_handle, &req, _rtuBuffer);
+        if (err == ESP_OK && dest) std::copy(_rtuBuffer, _rtuBuffer + count, dest);
     }
     _rtuPendingRequestCount--;
     _rtuMessageCount++;
     noteRtuResult(err);
     if (err != ESP_OK) {
         _rtuErrorCount++;
-        ESP_LOGE(TAG, "masterReadInput(addr=%u, count=%u) failed: 0x%x (%s)", addr, count, err, esp_err_to_name(err));
+        if (src && count == 1) {
+            ESP_LOGE(TAG, "%s(addr=%u, val=%u) failed: 0x%x (%s)", name, addr, src[0], err, esp_err_to_name(err));
+        } else {
+            ESP_LOGE(TAG, "%s(addr=%u, count=%u) failed: 0x%x (%s)", name, addr, count, err, esp_err_to_name(err));
+        }
     }
     return err;
+}
+
+esp_err_t PhaseSwitch::masterReadInput(uint16_t addr, uint16_t count, uint16_t* dest) {
+    return rtuRequest(4, addr, count, nullptr, dest, "masterReadInput"); // Read Input Registers
 }
 
 esp_err_t PhaseSwitch::masterReadHolding(uint16_t addr, uint16_t count, uint16_t* dest) {
-    if (!_master_handle) return ESP_ERR_INVALID_STATE;
-    mb_param_request_t req = {};
-    req.slave_addr = _serverId;
-    req.command = 3; // Read Holding Registers
-    req.reg_start = addr;
-    req.reg_size = count;
-    _rtuPendingRequestCount++;
-    esp_err_t err;
-    {
-        std::lock_guard<FifoMutex> lock(_rtuMutex);
-        err = mbc_master_send_request(_master_handle, &req, dest);
-    }
-    _rtuPendingRequestCount--;
-    _rtuMessageCount++;
-    noteRtuResult(err);
-    if (err != ESP_OK) {
-        _rtuErrorCount++;
-        ESP_LOGE(TAG, "masterReadHolding(addr=%u, count=%u) failed: 0x%x (%s)", addr, count, err, esp_err_to_name(err));
-    }
-    return err;
+    return rtuRequest(3, addr, count, nullptr, dest, "masterReadHolding"); // Read Holding Registers
 }
 
 esp_err_t PhaseSwitch::masterWriteHolding(uint16_t addr, uint16_t value) {
-    if (!_master_handle) return ESP_ERR_INVALID_STATE;
-    mb_param_request_t req = {};
-    req.slave_addr = _serverId;
-    req.command = 6; // Write Single Holding Register
-    req.reg_start = addr;
-    req.reg_size = 1;
-    _rtuPendingRequestCount++;
-    esp_err_t err;
-    {
-        std::lock_guard<FifoMutex> lock(_rtuMutex);
-        err = mbc_master_send_request(_master_handle, &req, &value);
-    }
-    _rtuPendingRequestCount--;
-    _rtuMessageCount++;
-    noteRtuResult(err);
-    if (err != ESP_OK) {
-        _rtuErrorCount++;
-        ESP_LOGE(TAG, "masterWriteHolding(addr=%u, val=%u) failed: 0x%x (%s)", addr, value, err, esp_err_to_name(err));
-    }
-    return err;
+    return rtuRequest(6, addr, 1, &value, nullptr, "masterWriteHolding"); // Write Single Holding Register
 }
 
 esp_err_t PhaseSwitch::masterWriteMultipleHolding(uint16_t addr, uint16_t count, const uint16_t* values) {
-    if (!_master_handle) return ESP_ERR_INVALID_STATE;
-    if (!values || count == 0) return ESP_ERR_INVALID_ARG;
-    mb_param_request_t req = {};
-    req.slave_addr = _serverId;
-    req.command = FC_WRITE_MULTIPLE;
-    req.reg_start = addr;
-    req.reg_size = count;
-    _rtuPendingRequestCount++;
-    esp_err_t err;
-    {
-        std::lock_guard<FifoMutex> lock(_rtuMutex);
-        err = mbc_master_send_request(_master_handle, &req, const_cast<uint16_t*>(values));
-    }
-    _rtuPendingRequestCount--;
-    _rtuMessageCount++;
-    noteRtuResult(err);
-    if (err != ESP_OK) {
-        _rtuErrorCount++;
-        ESP_LOGE(TAG, "masterWriteMultipleHolding(addr=%u, count=%u) failed: 0x%x (%s)", addr, count, err, esp_err_to_name(err));
-    }
-    return err;
+    if (!values) return ESP_ERR_INVALID_ARG;
+    return rtuRequest(FC_WRITE_MULTIPLE, addr, count, values, nullptr, "masterWriteMultipleHolding");
 }
 
 void PhaseSwitch::loop(){

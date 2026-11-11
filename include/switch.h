@@ -89,6 +89,14 @@
             // Serializes Modbus RTU requests: esp-modbus's own semaphore gives
             // the lock unconditionally when taking it times out.
             FifoMutex _rtuMutex;
+            // The only buffer handed to esp-modbus, guarded by _rtuMutex.
+            // esp-modbus keeps the pointer after a request returns and can
+            // still write a late answer into it (seen during OTA updates):
+            // a caller's stack buffer would be corrupted.
+            static constexpr uint16_t RTU_MAX_REGS = 125;
+            uint16_t _rtuBuffer[RTU_MAX_REGS] = {};
+            esp_err_t rtuRequest(uint8_t command, uint16_t addr, uint16_t count,
+                                 const uint16_t *src, uint16_t *dest, const char *name);
             std::atomic<uint32_t> _switchDelay;
             bool validateSetup();
             bool readActivePhases(uint8_t &phases);
