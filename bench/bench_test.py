@@ -202,7 +202,11 @@ class Bench:
         req = urllib.request.Request(self.esp + "/update?name=" + os.path.basename(path),
                                      data=data, method="POST",
                                      headers={"Content-Type": "application/octet-stream"})
-        reply = urllib.request.urlopen(req, timeout=180).read().decode(errors="replace")
+        self.note(f"OTA upload started ({len(data)} bytes)")
+        try:
+            reply = urllib.request.urlopen(req, timeout=180).read().decode(errors="replace")
+        except OSError as err:
+            raise TestFailure(f"OTA upload aborted: {err}")
         self.note(f"OTA upload: {reply.strip()}")
         if "successful" not in reply:
             raise TestFailure(f"OTA upload failed: {reply}")
