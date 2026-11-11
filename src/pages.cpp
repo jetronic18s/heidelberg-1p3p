@@ -9,6 +9,7 @@
 #include <esp_wifi.h>
 #include <esp_system.h>
 #include <esp_ota_ops.h>
+#include "crash_info.h"
 
 #include <cstdarg>
 #include <cstdint>
@@ -504,6 +505,8 @@ static esp_err_t handleStatusGet(httpd_req_t *req)
   std::string restart = resetReasonText(esp_reset_reason());
   if (s_phase_switch->bootCacheRestored()) restart += ", register cache restored";
   sendTableRow(body, "Last restart", restart);
+  const std::string crash = crashInfoText();
+  if (!crash.empty()) sendTableRow(body, "Crashes", crash);
   sendTableRow(body, "Firmware slots", firmwareSlotsText());
   char heap[48];
   snprintf(heap, sizeof(heap), "%u kB free, minimum %u kB",

@@ -5,6 +5,7 @@ file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
 set(MAIN_SRCS
     "${SRC_DIR}/config.cpp"
+    "${SRC_DIR}/crash_info.cpp"
     "${SRC_DIR}/cycle_counter.cpp"
     "${SRC_DIR}/debug.cpp"
     "${SRC_DIR}/ethernet_jl1101.cpp"
@@ -46,3 +47,6 @@ add_custom_target(app_git_version
 add_dependencies(${COMPONENT_LIB} app_git_version)
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE BOARD_DINGTIAN)
+
+# crash_info.cpp records the panic reason and backtrace in RTC memory.
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_panic_handler")
