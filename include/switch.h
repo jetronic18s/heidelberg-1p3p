@@ -90,6 +90,7 @@
             // the lock unconditionally when taking it times out.
             FifoMutex _rtuMutex;
             // The only buffer handed to esp-modbus, guarded by _rtuMutex.
+            // See lib/esp-modbus/PATCHES.md for why.
             // esp-modbus keeps the pointer after a request returns and can
             // still write a late answer into it (seen during OTA updates):
             // a caller's stack buffer would be corrupted.

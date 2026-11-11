@@ -456,6 +456,8 @@ void PhaseSwitch::beginModbus(){
     startTcpBridge();
 }
 
+static constexpr int64_t RTU_MIN_ANSWER_US = 5000;
+
 // All RTU requests go through _rtuBuffer, never through the caller's
 // buffer: see the comment at _rtuBuffer.
 esp_err_t PhaseSwitch::rtuRequest(uint8_t command, uint16_t addr, uint16_t count,
@@ -477,7 +479,16 @@ esp_err_t PhaseSwitch::rtuRequest(uint8_t command, uint16_t addr, uint16_t count
     {
         std::lock_guard<FifoMutex> lock(_rtuMutex);
         if (src) std::copy(src, src + count, _rtuBuffer);
+        const int64_t start = esp_timer_get_time();
         err = mbc_master_send_request(_master_handle, &req, _rtuBuffer);
+        const int64_t elapsed = esp_timer_get_time() - start;
+        // Request plus answer take at least 9 ms at 19200 baud. A faster
+        // "answer" is a stale result of an earlier request (see
+        // lib/esp-modbus/PATCHES.md): never use it.
+        if (err == ESP_OK && elapsed < RTU_MIN_ANSWER_US) {
+            ESP_LOGE(TAG, "%s(addr=%u): answer after %lld us is stale", name, addr, (long long)elapsed);
+            err = ESP_ERR_INVALID_RESPONSE;
+        }
         if (err == ESP_OK && dest) std::copy(_rtuBuffer, _rtuBuffer + count, dest);
     }
     _rtuPendingRequestCount--;
