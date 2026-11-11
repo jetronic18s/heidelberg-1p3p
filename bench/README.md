@@ -238,7 +238,7 @@ known problem.
 | 3 | Automatic 3p → 1p | 3 kW PV: evcc switches to 1p, 9–13 A on L1 |
 | 4 | Automatic 1p → 3p | 7 kW PV: evcc switches back to 3p |
 | 5 | Manual switch | evcc phases 1, then 3: the board switches each time; event log: both switches (evcc); contactor cycles: +1 per contactor, +2 phase switches |
-| 6 | Current after 3p → 1p | 5 kW PV, switch to 1p: the box keeps evcc's 16 A instead of 6 A (fix `b1ff5b1`) |
+| 6 | Current after 3p → 1p | 5 kW PV, switch to 1p: the box keeps evcc's 16 A instead of 6 A (fix `b1ff5b1`); "Refresh status" on the web page is pressed every second during the switch and must not change that |
 | 7 | Switch without evcc | switch via register 4 while charging above 7 A: restart current at most 6 A |
 | 8 | Switch while off | evcc mode off, switch: the box stays at 0 A, charges again after mode PV |
 | 9 | Restart while charging | no car disconnect in evcc, no evcc errors, charging resumes; event log: restart requested on the web page, software start |

@@ -431,6 +431,16 @@ def test_current_after_switch(b):
     b.mark_log()
     try:
         b.evcc_post("phases/1")
+        # "Refresh status" on the web page during the switch must not
+        # overwrite the current evcc writes into the cache meanwhile
+        b.wait(lambda: b.esp_state() not in (None, "Running"), 30, "switch started")
+        presses = 0
+        while b.esp_state() != "Running" and presses < 120:
+            req = urllib.request.Request(b.esp + "/status", data=b"", method="POST")
+            urllib.request.urlopen(req, timeout=5).read()
+            presses += 1
+            time.sleep(1)
+        b.note(f"Refresh status pressed {presses} times during the switch")
         b.wait(lambda: b.charging(1), 120, "charging on 1p")
         b.settle(40)  # several evcc cycles: a stuck 6 A would stay
         st = b.sim_state()
