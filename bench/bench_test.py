@@ -1353,6 +1353,39 @@ def test_late_answers(b):
                            r"charge power: [1-9]\d?W"])
 
 
+def test_config_survives_restart(b):
+    """Config save: a valid switch delay is saved without error and survives a restart"""
+    def config_page():
+        return urllib.request.urlopen(b.esp + "/config", timeout=5).read().decode()
+    def save(delay):
+        # modbus/telnet: a form without them would switch Modbus off
+        resp = urllib.request.urlopen(urllib.request.Request(
+            b.esp + "/config", data=f"sd={delay}&modbus=1&telnet=1".encode(), method="POST"), timeout=5)
+        if "err=" in resp.geturl():
+            raise TestFailure(f"saving switch delay {delay} failed: {resp.geturl()}")
+    m = re.search(r'name="sd" value="(\d+)"', config_page())
+    if not m:
+        raise TestFailure("no switch delay on the config page")
+    before = int(m[1])
+    delay = before + 1000 if before + 1000 <= 600000 else before - 1000
+    b.mark_events()
+    save(delay)
+    try:
+        # The setter writes first and only then takes the value: what the
+        # page shows must be what NVS holds after a restart.
+        b.esp_reboot()
+        b.wait_esp_running()
+        m = re.search(r'name="sd" value="(\d+)"', config_page())
+        b.note(f"switch delay {before} -> {delay} ms, after the restart {m and m[1]} ms")
+        if not m or int(m[1]) != delay:
+            raise TestFailure(f"switch delay after the restart: {m and m[1]}, saved {delay}")
+    finally:
+        save(before)
+    if any("could not be saved" in e for e in b.events_since_mark()):
+        raise TestFailure("the event log reports a failed save")
+    b.check_log(allowed=ALLOWED_ON_RESTART)
+
+
 TESTS = [
     test_boot, test_pv_charging, test_auto_1p, test_auto_3p, test_manual_switch,
     test_current_after_switch, test_switch_without_evcc, test_switch_while_disabled,
@@ -1363,7 +1396,7 @@ TESTS = [
     test_disable_after_switch, test_busy_bridge, test_parallel_requests,
     test_write_multiple_phases, test_concurrent_rtu_and_status, test_clear_event_log,
     test_charge_pause, test_restart_during_switch, test_web_robustness,
-    test_silent_during_switch, test_late_answers,
+    test_silent_during_switch, test_late_answers, test_config_survives_restart,
 ]
 
 # tests that end in a safety fault on purpose

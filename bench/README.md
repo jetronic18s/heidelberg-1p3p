@@ -272,6 +272,8 @@ known problem.
 | 32 | Restart during a phase switch | while charging on 3p with `stopdelay 3`, the web page requests 1p and a reboot 0.3 s later, so the restart lands while the car still draws current: the board stops charging and waits for zero current before it restarts (`cuts_under_load` unchanged), comes back and evcc charges again |
 | 33 | Web robustness | a form with `Content-Length` 2 MB gets 413, a form body that stops arriving gets 408, an OTA upload that stops after 4 kB is aborted with 408 after about 35 s, and a current written over Modbus during that upload reaches the wallbox afterwards; switch delays `abc`, `-1`, `500` and `700000` are refused, a valid delay together with an invalid WiFi address is refused as a whole, and the stored delay stays; an address field of 4 kB and an address with a leading blank are refused; the board does not restart |
 | 34 | Wallbox silent during a switch | while charging on 3p the wallbox stops answering, then the web page requests 1p: after 60 s the board gives the switch up (`phase switch 3p to 1p (web page) given up`), no safety fault, the contactors stay on 3p; once the wallbox answers again evcc charges on 3p |
+| 35 | Late wallbox answers | while charging on 3p the simulated wallbox answers the next 60 requests late (`LATE="<ms> <jitter>"`, default 485–515 ms, past the 500 ms timeout): the board does not restart or crash, evcc charges on 3p again, and evcc never sees a value of another request (`invalid status`, `implausible`, `charge power` 1–99 W); `exception '4'` and timeouts are allowed. Answers up to 700 ms after the request are covered, RTU cannot tell later ones apart |
+| 36 | Config survives a restart | a valid switch delay (current value ± 1 s) is saved without `err=`, survives a reboot, and is restored afterwards; no `a setting could not be saved` event |
 
 ### Known problems
 
@@ -295,6 +297,15 @@ Not automated, because they need a hand on the hardware:
 - **Contactor faults:** pull the NC wire of DI1 while running (`0xE103`, or
   `0xE101` with the other contactor on); tie DI1 to GND permanently (`0xE102`
   after switch-on).
+- **Failed config save:** build a test firmware where `Config::writeString()`
+  returns `commitOrLog(_nvsHandle, key, ESP_ERR_NVS_NOT_ENOUGH_SPACE)` for the
+  value `fail.test` (do not commit it). Saving `fail.test` as NTP server
+  together with a new switch delay: the config page shows "Nicht alle
+  Einstellungen konnten gespeichert werden", the NTP server keeps its old
+  value, the switch delay is saved, saving again fails again, and the event
+  log has one `a setting could not be saved (ESP_ERR_NVS_NOT_ENOUGH_SPACE)`
+  entry per boot. NVS cannot be made to fail from outside: the input checks
+  refuse anything too long.
 - **Phase switch from the board's web UI:** switches without evcc writing a
   current; the board restarts at most at 6 A.
 
