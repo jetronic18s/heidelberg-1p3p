@@ -216,6 +216,11 @@ Checks after every test:
   tests with a wallbox that does not answer (it cannot be locked).
 - **Safety faults:** a fault on the board fails the test, except in the tests
   that provoke one.
+- **Contactors:** the simulator counts power cuts while current flows
+  (`cuts_under_load`). Any fails the test, except in the power loss tests.
+- **Crashes and restarts:** the test fails when the "Crashes" counter on the
+  status page went up, or when the event log shows a start that is neither a
+  software restart nor a power-on (crash, watchdog, brownout).
 
 Results:
 
@@ -239,12 +244,12 @@ known problem.
 | 4 | Automatic 1p → 3p | 7 kW PV: evcc switches back to 3p |
 | 5 | Manual switch | evcc phases 1, then 3: the board switches each time; event log: both switches (evcc); contactor cycles: +1 per contactor, +2 phase switches |
 | 6 | Current after 3p → 1p | 5 kW PV, switch to 1p: the box keeps evcc's 16 A instead of 6 A (fix `b1ff5b1`); "Refresh status" on the web page is pressed every second during the switch and must not change that |
-| 7 | Switch without evcc | switch via register 4 while charging above 7 A: restart current at most 6 A |
+| 7 | Switch without evcc | switch via register 4 while charging at 16 A (evcc writes no current meanwhile): the first current after the power cut is 6 A |
 | 8 | Switch while off | evcc mode off, switch: the box stays at 0 A, charges again after mode PV |
 | 9 | Restart while charging | no car disconnect in evcc, no evcc errors, charging resumes; event log: restart requested on the web page, software start |
-| 10 | OTA while charging | firmware upload while charging: evcc gets cached values during the upload, then like a restart |
+| 10 | OTA while charging | firmware upload while charging: evcc gets cached values during the upload, then like a restart; afterwards the board runs the uploaded version from the other firmware slot |
 | 11 | Restart without car | no phantom "car connected" in evcc |
-| 12 | Restart on 3p | the board boots on 3p again, no phases mismatch in evcc after the next car connect |
+| 12 | Restart on 3p | the board boots on 3p again, no phases mismatch in evcc after the next car connect, evcc and the board report the same phases |
 | 13 | Unplug while charging | evcc sees the car leave, current drops to 0; event log: charging stopped with energy, car disconnected |
 | 14 | Unplug during a restart | evcc sees the car leave after the restart |
 | 15 | Plug in during a switch | evcc sees the car after the switch and charges |
@@ -265,7 +270,7 @@ known problem.
 | 30 | Clear event log | `GET /events` does not clear the log, `POST /events` leaves only `event log cleared on the web page`; after a reboot that entry is still the oldest, followed by the restart entries; clearing leaves the contactor cycle counters unchanged |
 | 31 | Charge pause | with `wait on`, PV drops to 0 while charging: evcc pauses, the car waits in C1; event log: `charging paused`, then `charging resumed` when PV returns, and after unplugging one `charging stopped, x kWh` for the whole charge, no new `charging started`; evcc warns `charger logic error: disabled but charging` during the pause because it maps C1 to charging, as with a real car waiting in C1 |
 | 32 | Restart during a phase switch | while charging on 3p with `stopdelay 3`, the web page requests 1p and a reboot 0.3 s later, so the restart lands while the car still draws current: the board stops charging and waits for zero current before it restarts (`cuts_under_load` unchanged), comes back and evcc charges again |
-| 33 | Web robustness | a form with `Content-Length` 2 MB gets 413, a form body that stops arriving gets 408, an OTA upload that stops after 4 kB is aborted with 408 after about 35 s, and a current written over Modbus during that upload reaches the wallbox afterwards; switch delays `abc`, `-1`, `500` and `700000` are refused, a valid delay together with an invalid WiFi address is refused as a whole, and the stored delay stays; the board does not restart |
+| 33 | Web robustness | a form with `Content-Length` 2 MB gets 413, a form body that stops arriving gets 408, an OTA upload that stops after 4 kB is aborted with 408 after about 35 s, and a current written over Modbus during that upload reaches the wallbox afterwards; switch delays `abc`, `-1`, `500` and `700000` are refused, a valid delay together with an invalid WiFi address is refused as a whole, and the stored delay stays; an address field of 4 kB and an address with a leading blank are refused; the board does not restart |
 | 34 | Wallbox silent during a switch | while charging on 3p the wallbox stops answering, then the web page requests 1p: after 60 s the board gives the switch up (`phase switch 3p to 1p (web page) given up`), no safety fault, the contactors stay on 3p; once the wallbox answers again evcc charges on 3p |
 
 ### Known problems
