@@ -471,20 +471,29 @@ def test_current_after_switch(b):
 
 
 def test_switch_without_evcc(b):
-    """Switch without evcc writing a current: restart at most at 6 A"""
-    b.start_charging(pv=8000, phases=3)
-    b.wait(lambda: b.sim_state()["max_current"] > 7, 60, "charging above 7 A first")
+    """Switch without evcc writing a current: restart at 6 A, not at the old 16 A"""
+    # The car charges at its maximum: evcc stays at 16 A and writes no new
+    # current while the switch runs (in PV mode it follows every change of
+    # the surplus, and the board would rightly restart with that current).
+    b.start_charging(pv=20000, phases=3)
+    b.wait(lambda: b.sim_state()["max_current"] == 16, 120, "charging at 16 A first")
+    b.settle(15)
     b.mark_log()
     b.esp_write(4, 1)  # like a switch from the ESP32 web UI: evcc does not know
     b.wait(lambda: b.sim_state()["powered_phases"] == 1 and b.esp_state() == "Running",
            120, "board on 1p and Running")
-    restart = [line for line in b.sim_log_since_mark() if "max current" in line]
+    # the first current after the power cut; the 0 A before it stops charging
+    lines = b.sim_log_since_mark()
+    power_on = max((i for i, line in enumerate(lines) if "power on" in line), default=None)
+    if power_on is None:
+        raise TestFailure("the wallbox was not switched off and on")
+    restart = [line for line in lines[power_on:] if "max current" in line]
     b.note(f"restart current: {restart[:1]}")
     if not restart:
         raise TestFailure("the board wrote no restart current")
     value = float(re.search(r"max current ([\d.]+) A", restart[0]).group(1))
-    if value > 6:
-        raise TestFailure(f"expected a restart current of at most 6 A, got {value} A")
+    if value != 6:
+        raise TestFailure(f"expected a restart current of 6 A, got {value} A")
     b.check_log()
 
 
