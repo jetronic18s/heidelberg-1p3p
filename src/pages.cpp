@@ -815,8 +815,13 @@ static esp_err_t handleUpdateGet(httpd_req_t *req)
   dbgln("[webserver] GET /update");
   std::string body;
   sendResponseHeader(body, "Firmware Update");
+  // status C2 or derating: the car is charging, the update interrupts it
+  const uint16_t status = s_phase_switch ? s_phase_switch->getInputRegister(5) : 0;
+  const bool charging = status == 7 || status == 8;
+  if (charging) body += "<p class=\"e\">The car is charging: the update restarts the board and interrupts charging briefly.</p>";
   body += "<form id=\"ota\"><input type=\"file\" id=\"file\" required/><p></p><button class=\"r\" type=\"submit\">Upload</button></form><p id=\"msg\"></p>";
-  body += "<script>document.getElementById('ota').addEventListener('submit',async function(e){e.preventDefault();var f=document.getElementById('file').files[0];if(!f)return;document.getElementById('msg').textContent='Uploading...';var r=await fetch('/update?name='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f});document.getElementById('msg').textContent=await r.text();});</script>";
+  body += std::string("<script>var charging=") + (charging ? "true" : "false") + ";";
+  body += "document.getElementById('ota').addEventListener('submit',async function(e){e.preventDefault();var f=document.getElementById('file').files[0];if(!f)return;if(charging&&!confirm('The car is charging. Update anyway?'))return;document.getElementById('msg').textContent='Uploading...';var r=await fetch('/update?name='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f});document.getElementById('msg').textContent=await r.text();});</script>";
   sendButton(body, "Back", "/");
   sendResponseTrailer(body);
   sendHtml(req, body);
