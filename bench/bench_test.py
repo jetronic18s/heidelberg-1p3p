@@ -523,16 +523,44 @@ def test_restart_charging(b):
     b.check_log(allowed=ALLOWED_ON_RESTART)
 
 
+def firmware_image():
+    return os.environ.get("FIRMWARE_BIN", os.path.join(REPO, "build", "heidelberg-1p3p.bin"))
+
+
+def image_version(path):
+    """Version string of a firmware image (esp_app_desc_t behind the image
+    and segment headers), None if it is not an app image."""
+    with open(path, "rb") as f:
+        head = f.read(80)
+    if len(head) < 80 or struct.unpack("<I", head[32:36])[0] != 0xABCD5432:
+        return None
+    return head[48:80].split(b"\0", 1)[0].decode(errors="replace")
+
+
 def test_ota_charging(b):
-    """OTA update while charging: same as a restart, energy kept"""
-    firmware = os.environ.get("FIRMWARE_BIN", os.path.join(REPO, "build", "heidelberg-1p3p.bin"))
+    """OTA update while charging: same as a restart, energy kept, the new image runs"""
+    firmware = firmware_image()
     if not os.path.exists(firmware):
         raise TestFailure(f"firmware image missing: {firmware} (set FIRMWARE_BIN)")
+    expected = image_version(firmware)
+    if not expected:
+        raise TestFailure(f"not a firmware image: {firmware}")
     b.start_charging()
     b.mark_log()
+    b.mark_events()
+    version_before, slot_before = b.esp_version()
     b.esp_ota(firmware)
     b.wait_esp_running()
+    # "Update successful" only says the image was written: the board must
+    # also have started it, from the other slot, with a software restart
+    version, slot = b.esp_version()
+    b.note(f"firmware {version_before} in {slot_before} -> {version} in {slot}")
+    if version != expected:
+        raise TestFailure(f"the board runs {version}, the image is {expected}")
+    if not slot or slot == slot_before:
+        raise TestFailure(f"the board still runs from slot {slot}")
     b.wait(lambda: b.charging(), 180, "evcc charging again")
+    b.expect_events(r"restart after a firmware update", r"start: software")
     b.check_log(allowed=ALLOWED_ON_RESTART)
 
 
@@ -1148,7 +1176,7 @@ def test_web_robustness(b):
     b.note(f"stalled form body: {head.splitlines()[0] if head else 'no answer'} after {time.monotonic() - t0:.0f} s")
     if " 408 " not in head:
         raise TestFailure(f"a stalled form body was not given up with 408: {head!r}")
-    with open(os.path.join(REPO, "build", "heidelberg-1p3p.bin"), "rb") as f:
+    with open(firmware_image(), "rb") as f:
         start = f.read(4096)  # a valid image start, then nothing more
     # During the upload evcc's writes only reach the cache; after the failed
     # upload the board must send them to the wallbox. The car charges at the
