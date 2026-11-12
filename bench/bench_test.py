@@ -592,6 +592,9 @@ def test_restart_on_3p(b):
     b.settle(20)
     lp, st = b.lp(), b.sim_state()
     b.note(f"evcc phasesActive {lp['phasesActive']}, board {st['powered_phases']}p")
+    b.wait(lambda: b.esp_state() == "Running" and b.sim_state()["powered_phases"] in (1, 3)
+           and b.lp()["phasesActive"] == b.sim_state()["powered_phases"], 120,
+           "evcc and the board on the same phases")
     b.check_log(allowed=ALLOWED_ON_RESTART)
 
 
