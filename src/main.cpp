@@ -272,6 +272,13 @@ static void main_task(void *pvParameters)
 
         const bool eth_active = ethernetIsActive();
 
+        // The signed comparison below only works for 24.8 days after the
+        // time: forget it once it has passed, or a link loss weeks later
+        // would wait up to 24.8 days before WiFi comes back.
+        if (wifi_reenable_after != 0 && (int32_t)(nowMs() - wifi_reenable_after) >= 0) {
+            wifi_reenable_after = 0;
+        }
+
         if (eth_active) {
             eth_inactive_since = 0;
             if (wifiNativeGetMode() != WIFI_MODE_NULL) {
