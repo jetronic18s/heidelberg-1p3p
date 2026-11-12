@@ -160,6 +160,7 @@
             std::atomic<uint32_t> _refusedSinceLog; // bridge task counts, main loop flushes
             std::atomic<uint32_t> _lastRefusedLogMs;
             uint32_t _carQuietUntilMs; // see logCarState()
+            bool _carQuiet;            // _carQuietUntilMs not reached yet, main loop only
             std::atomic<uint32_t> _lastClientAddr; // last Modbus TCP client, network order
             std::atomic<uint32_t> _controllerAddr; // client that wrote last, feeds the evcc watchdog
             uint32_t _restartDeadlineMs;

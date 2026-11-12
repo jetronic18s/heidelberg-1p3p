@@ -218,6 +218,7 @@ PhaseSwitch::PhaseSwitch()
   ,_refusedSinceLog(0)
   ,_lastRefusedLogMs(0)
   ,_carQuietUntilMs(0)
+  ,_carQuiet(false)
   ,_lastClientAddr(0)
   ,_controllerAddr(0)
   ,_restartDeadlineMs(0)
@@ -316,6 +317,10 @@ void PhaseSwitch::rememberCarState(){
 // 5): A no car, B connected, C charging. The state is kept across restarts,
 // so a phase switch or a restart does not end the charge in the log.
 void PhaseSwitch::logCarState(){
+  // pastDeadline() only works for 24.8 days after the deadline (uint32_t
+  // milliseconds): end the quiet time for good once it is over. This runs
+  // every 2 s in Running.
+  if (_carQuiet && pastDeadline(_carQuietUntilMs)) _carQuiet = false;
   uint16_t status;
   uint32_t energyWh;
   {
@@ -338,7 +343,7 @@ void PhaseSwitch::logCarState(){
   if (carClass == previous) return;
   // After a phase switch or a start the car waits until evcc sets the
   // current again; that is neither a pause nor the end of the charge.
-  if (previous == 2 && (carClass == 1 || carClass == 3) && !pastDeadline(_carQuietUntilMs)) return;
+  if (previous == 2 && (carClass == 1 || carClass == 3) && _carQuiet) return;
   uint32_t chargeStartWh = eventLogChargeStartWh();
   if (previous != 0xFF) {
     if (inCharge && carClass < 2) {
@@ -846,6 +851,7 @@ void PhaseSwitch::loop(){
       _lastWallboxOkMs = nowMs();
       finishSwitchStats();
       _carQuietUntilMs = nowMs() + CAR_EVENT_QUIET_MS;
+      _carQuiet = true;
       _state = State::Running;
       return;
     }
@@ -855,6 +861,7 @@ void PhaseSwitch::loop(){
       _lastWallboxOkMs = nowMs();
       finishSwitchStats();
       _carQuietUntilMs = nowMs() + CAR_EVENT_QUIET_MS;
+      _carQuiet = true;
       _state = State::Running;
       return;
     }
