@@ -581,9 +581,13 @@ static esp_err_t handleConfigGet(httpd_req_t *req)
   bool ipInvalid = err == "ip";
   bool ntpInvalid = err == "ntp";
   bool sdInvalid = err == "sd";
+  bool saveFailed = err == "save";
 
   std::string body;
   sendResponseHeader(body, "Config");
+  if (saveFailed) {
+    body += "<p class=\"e\">Nicht alle Einstellungen konnten gespeichert werden, es gelten die angezeigten Werte (siehe Ereignisprotokoll).</p>";
+  }
   if (ipInvalid) {
     body += "<p class=\"e\">Ungueltige statische IP-Konfiguration (IP, Gateway, Netmask und optional DNS muessen gueltige IPv4-Adressen sein).</p>";
   }
@@ -722,14 +726,15 @@ static esp_err_t handleConfigPost(httpd_req_t *req)
   }
 #endif
 
-  // all checks passed: apply
+  // all checks passed: apply; a failed save keeps the old value
+  bool saved = true;
   if (hasDelay) {
-    s_config->setSwitchDelay(delay);
-    s_phase_switch->setSwitchDelay(delay);
+    saved &= s_config->setSwitchDelay(delay);
+    s_phase_switch->setSwitchDelay(s_config->getSwitchDelay());
     dbgln("[webserver] saved switch delay");
   }
   if (hasHostname) {
-    s_config->setHostname(hostname);
+    saved &= s_config->setHostname(hostname);
     if (s_config->getHostname().length() > 0) {
       wifiNativeSetHostname(s_config->getHostname().c_str());
 #ifdef BOARD_DINGTIAN
@@ -738,28 +743,28 @@ static esp_err_t handleConfigPost(httpd_req_t *req)
     }
   }
   if (hasNtp) {
-    s_config->setNtpServer(ntp);
+    saved &= s_config->setNtpServer(ntp);
     timeSyncSetServer(s_config->getNtpServer());
   }
 
   if (hasParam(params, "wifimode")) {
-    s_config->setWifiDhcp(wifiDhcp);
+    saved &= s_config->setWifiDhcp(wifiDhcp);
   }
-  if (hasParam(params, "wifiip")) s_config->setWifiIp(std::string(findParam(params, "wifiip").c_str()));
-  if (hasParam(params, "wifigw")) s_config->setWifiGw(std::string(findParam(params, "wifigw").c_str()));
-  if (hasParam(params, "wifimask")) s_config->setWifiMask(std::string(findParam(params, "wifimask").c_str()));
-  if (hasParam(params, "wifidns1")) s_config->setWifiDns1(std::string(findParam(params, "wifidns1").c_str()));
-  if (hasParam(params, "wifidns2")) s_config->setWifiDns2(std::string(findParam(params, "wifidns2").c_str()));
+  if (hasParam(params, "wifiip")) saved &= s_config->setWifiIp(std::string(findParam(params, "wifiip").c_str()));
+  if (hasParam(params, "wifigw")) saved &= s_config->setWifiGw(std::string(findParam(params, "wifigw").c_str()));
+  if (hasParam(params, "wifimask")) saved &= s_config->setWifiMask(std::string(findParam(params, "wifimask").c_str()));
+  if (hasParam(params, "wifidns1")) saved &= s_config->setWifiDns1(std::string(findParam(params, "wifidns1").c_str()));
+  if (hasParam(params, "wifidns2")) saved &= s_config->setWifiDns2(std::string(findParam(params, "wifidns2").c_str()));
 
 #ifdef BOARD_DINGTIAN
   if (hasParam(params, "ethmode")) {
-    s_config->setEthDhcp(ethDhcp);
+    saved &= s_config->setEthDhcp(ethDhcp);
   }
-  if (hasParam(params, "ethip")) s_config->setEthIp(std::string(findParam(params, "ethip").c_str()));
-  if (hasParam(params, "ethgw")) s_config->setEthGw(std::string(findParam(params, "ethgw").c_str()));
-  if (hasParam(params, "ethmask")) s_config->setEthMask(std::string(findParam(params, "ethmask").c_str()));
-  if (hasParam(params, "ethdns1")) s_config->setEthDns1(std::string(findParam(params, "ethdns1").c_str()));
-  if (hasParam(params, "ethdns2")) s_config->setEthDns2(std::string(findParam(params, "ethdns2").c_str()));
+  if (hasParam(params, "ethip")) saved &= s_config->setEthIp(std::string(findParam(params, "ethip").c_str()));
+  if (hasParam(params, "ethgw")) saved &= s_config->setEthGw(std::string(findParam(params, "ethgw").c_str()));
+  if (hasParam(params, "ethmask")) saved &= s_config->setEthMask(std::string(findParam(params, "ethmask").c_str()));
+  if (hasParam(params, "ethdns1")) saved &= s_config->setEthDns1(std::string(findParam(params, "ethdns1").c_str()));
+  if (hasParam(params, "ethdns2")) saved &= s_config->setEthDns2(std::string(findParam(params, "ethdns2").c_str()));
 
   if (s_config->getEthDhcp()) {
     ethernetConfigureDhcp();
@@ -773,9 +778,9 @@ static esp_err_t handleConfigPost(httpd_req_t *req)
 #endif
 
   const bool modbusEnabled = hasParam(params, "modbus");
-  s_config->setModbusEnabled(modbusEnabled);
-  s_config->setTelnetEnabled(modbusEnabled && hasParam(params, "telnet"));
-  redirect(req, "/");
+  saved &= s_config->setModbusEnabled(modbusEnabled);
+  saved &= s_config->setTelnetEnabled(modbusEnabled && hasParam(params, "telnet"));
+  redirect(req, saved ? "/" : "/config?err=save");
   return ESP_OK;
 }
 
@@ -956,8 +961,11 @@ static esp_err_t handleWifiGet(httpd_req_t *req)
 static esp_err_t handleWifiPost(httpd_req_t *req)
 {
   dbgln("[webserver] POST /wifi");
-  s_config->setWifiCredsSet(false);
-  s_config->setWifiResetPending(true);
+  if (!s_config->setWifiResetPending(true)) {
+    sendText(req, "500 Internal Server Error", "Could not save the WiFi reset, nothing changed (see event log)");
+    return ESP_OK;
+  }
+  s_config->setWifiCredsSet(false); // the boot clears it as well
   dbgln("[webserver] scheduled wifi config erase on next boot");
 
   std::string body;

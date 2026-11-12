@@ -23,6 +23,7 @@
         ChargePaused,       // the car waits for current (status C1)
         ChargeResumed,
         SwitchAborted,      // a = from, b = to, c = SwitchSource
+        SettingNotSaved,    // value = esp_err_t; once per boot
     };
 
     enum class RestartSource : uint8_t { WebPage = 1, FirmwareUpdate, WifiSettings };

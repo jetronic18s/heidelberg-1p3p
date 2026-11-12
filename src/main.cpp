@@ -155,9 +155,10 @@ static void main_task(void *pvParameters)
     
     debugSetTelnetEnabled(shouldEnableTelnetNow(config));
     
-    if (config.getWifiResetPending()) {
+    // Erase only when the flag could be cleared: otherwise every later
+    // restart would erase the WiFi config again.
+    if (config.getWifiResetPending() && config.setWifiResetPending(false)) {
         ESP_LOGI(TAG, "pending reset: clearing stored wifi credentials");
-        config.setWifiResetPending(false);
         config.setWifiCredsSet(false);
         wifiNativeEnsureStaMode();
         sleepMs(50);

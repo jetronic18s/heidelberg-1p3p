@@ -5,6 +5,7 @@
 #include <mutex>
 #include <vector>
 #include "esp_attr.h"
+#include "esp_err.h"
 #include "esp_log.h"
 #include "esp_rom_crc.h"
 #include "esp_system.h"
@@ -231,6 +232,10 @@ static std::string eventText(const EventEntry &e)
     case EventType::SwitchAborted:
       snprintf(buf, sizeof(buf), "phase switch %up to %up (%s) given up, the wallbox does not answer", e.a, e.b,
                (SwitchSource)e.c == SwitchSource::WebPage ? "web page" : "evcc");
+      return buf;
+    case EventType::SettingNotSaved:
+      snprintf(buf, sizeof(buf), "a setting could not be saved (%s), the old value stays",
+               esp_err_to_name((esp_err_t)e.value));
       return buf;
   }
   return "unknown event";
