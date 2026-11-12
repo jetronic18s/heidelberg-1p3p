@@ -491,7 +491,7 @@ static esp_err_t handleStatusGet(httpd_req_t *req)
   const bool wifiConnected = (wifiNativeGetMode() != WIFI_MODE_NULL) && wifiNativeIsStaConnected();
   const bool wifiCredsSet = hasSavedWifiCredentials();
   sendTableRow(body, "WiFi Credentials", wifiCredsSet ? "set" : "not set");
-  sendTableRow(body, "WiFi SSID", wifiConnected ? wifiNativeStaConnectedSsid() : std::string());
+  sendTableRow(body, "WiFi SSID", wifiConnected ? escapeHtml(wifiNativeStaConnectedSsid()) : std::string());
   sendTableRow(body, "WiFi RSSI", wifiConnected ? std::to_string(wifiNativeStaRssi()) : std::string());
   sendTableRow(body, "WiFi Quality", wifiConnected ? WiFiQuality(wifiNativeStaRssi()) : std::string(""));
   sendTableRow(body, "WiFi MAC", wifiMacSafe());
