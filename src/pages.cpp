@@ -855,6 +855,15 @@ static esp_err_t handleUpdatePost(httpd_req_t *req)
     bool done = false;
     ~UpdateGuard() { if (!done && s_phase_switch) s_phase_switch->setUpdateInProgress(false); }
   } guard;
+  // From here evcc is served from the cache, but a request already on its
+  // way to the wallbox would time out while the erase stalls the RTU master
+  // (evcc sees exception 4): let it finish first, at most 1.5 s.
+  // A bridge task that decided for the wallbox just before the flag was set
+  // has not counted its request yet: wait once before looking.
+  for (int i = 0; i < 30 && s_phase_switch; i++) {
+    vTaskDelay(pdMS_TO_TICKS(50));
+    if (s_phase_switch->getRtuPendingRequestCount() == 0) break;
+  }
   esp_ota_handle_t otaHandle = 0;
   if (esp_ota_begin(updatePartition, OTA_SIZE_UNKNOWN, &otaHandle) != ESP_OK) {
     sendText(req, "400 Bad Request", "OTA could not begin");
