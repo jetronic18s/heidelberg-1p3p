@@ -14,6 +14,7 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
 #include <vector>
 
 #include "cycle_counter.h"
@@ -679,6 +680,23 @@ static esp_err_t handleConfigPost(httpd_req_t *req)
     return ESP_OK;
   }
 
+  // With DHCP the address fields are saved as well, so they must be empty
+  // or an address there too: arbitrary text would end up in the NVS, and a
+  // value NVS refuses (4000 bytes and more) restarts the board.
+  auto addressesOk = [&params](std::initializer_list<const char *> keys) {
+    for (const char *key : keys) {
+      if (!Config::isIpv4Valid(findParam(params, key), true)) return false;
+    }
+    return true;
+  };
+  if (!addressesOk({"wifiip", "wifigw", "wifimask", "wifidns1", "wifidns2"})
+#ifdef BOARD_DINGTIAN
+      || !addressesOk({"ethip", "ethgw", "ethmask", "ethdns1", "ethdns2"})
+#endif
+      ) {
+    redirect(req, "/config?err=ip");
+    return ESP_OK;
+  }
   const bool wifiDhcp = hasParam(params, "wifimode") ? (findParam(params, "wifimode") == "dhcp") : s_config->getWifiDhcp();
   if (!wifiDhcp) {
     if (!Config::isIpv4Valid(findParam(params, "wifiip", s_config->getWifiIp()))

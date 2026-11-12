@@ -67,12 +67,22 @@ bool Config::isHostnameValid(const std::string &value)
 
 bool Config::isIpv4Valid(const std::string &value, bool allowEmpty)
 {
-    std::string trimmed = trimCopy(value);
-    if (trimmed.empty()) {
+    // "255.255.255.255" has 15 characters; the value is saved as it came,
+    // and NVS refuses strings of 4000 bytes and more.
+    if (value.length() > 32) {
+        return false;
+    }
+    // No blanks around it: the network setup at the next start parses the
+    // saved text and refuses e.g. a leading blank, the static address would
+    // then silently not be used.
+    if (trimCopy(value).length() != value.length()) {
+        return false;
+    }
+    if (value.empty()) {
         return allowEmpty;
     }
     ip4_addr_t parsed;
-    return ip4addr_aton(trimmed.c_str(), &parsed) != 0;
+    return ip4addr_aton(value.c_str(), &parsed) != 0;
 }
 
 Config::Config()
