@@ -164,6 +164,18 @@ class Bench:
                       self.esp_status_page())
         return tuple(int(v) for v in m.groups()) if m else None
 
+    def esp_crashes(self):
+        """Crashes since power-on (status page row "Crashes"), 0 without the row."""
+        match = re.search(r"\nCrashes:? = (\d+) since power-on", self.esp_status_page())
+        return int(match.group(1)) if match else 0
+
+    def esp_version(self):
+        """(version, running firmware slot) from the status page."""
+        page = self.esp_status_page()
+        version = re.search(r"\nVersion:? = ([^\n]*)", page)
+        slot = re.search(r"\nFirmware slots:? = (\w+) [^\n]*?\(running\)", page)
+        return (version.group(1).strip() if version else None, slot.group(1) if slot else None)
+
     def esp_state(self):
         page = self.esp_page()
         return page[1] if page else None
@@ -1243,10 +1255,7 @@ def test_silent_during_switch(b):
 def test_late_answers(b):
     """Late wallbox answers (after the 500 ms timeout): no wrong values, no crash"""
     b.start_charging(pv=7000, phases=3)
-    def crashes():
-        match = re.search(r"Crashes = (\d+) since power-on", b.esp_status_page())
-        return int(match.group(1)) if match else 0
-    crashes_before = crashes()
+    crashes_before = b.esp_crashes()
     current = b.sim_state()["max_current"]
     late_before = b.sim_state()["late_sent"]
     count = 60
@@ -1265,8 +1274,8 @@ def test_late_answers(b):
     restarts = [e for e in b.events_since_mark() if "start:" in e]
     if restarts:
         raise TestFailure(f"the board restarted: {restarts}")
-    if crashes() != crashes_before:
-        raise TestFailure(f"crash recorded: {crashes_before} -> {crashes()}")
+    if b.esp_crashes() != crashes_before:
+        raise TestFailure(f"crash recorded: {crashes_before} -> {b.esp_crashes()}")
     b.wait(lambda: b.charging(3), 120, "evcc charging on 3p")
     state = b.sim_state()
     if state["lock"] != 1 or state["max_current"] < 6:
@@ -1306,6 +1315,11 @@ EXPECTS_FAULT = {test_dead_wallbox}
 # a wallbox that does not answer cannot be locked before the power goes off
 # and a power loss of the board cuts the wallbox without locking it first
 EXPECTS_ENERGY_LOSS = {test_dead_wallbox, test_power_loss_charging, test_power_loss_no_car}
+# cutting the board's power drops the contactors while the car charges, and
+# the sagging supply voltage may be reported as a brownout
+EXPECTS_POWER_LOSS = {test_power_loss_charging, test_power_loss_no_car}
+# a start no test asks for: the tests restart by software or cut the power
+ABNORMAL_START = r"start: (?!software|power-on)"
 
 
 def prepare(b):
@@ -1339,13 +1353,35 @@ def prepare(b):
                120, f"board on {expected}p")
 
 
-def check_invariants(b, test, lost_before):
-    """Checks after every test: no energy lost, no unexpected safety fault."""
-    lost = b.sim_state()["energy_lost_wh"] - lost_before
+def snapshot(b):
+    """State before a test that check_invariants() compares with afterwards."""
+    st = b.sim_state()
+    events = b.esp_events()
+    return {"lost": st["energy_lost_wh"], "cuts": st["cuts_under_load"],
+            "crashes": b.esp_crashes(), "event": events[0] if events else None}
+
+
+def check_invariants(b, test, before):
+    """Checks after every test: no energy lost, no unexpected safety fault,
+    the contactors never opened under load, no crash, no unexpected restart."""
+    st = b.sim_state()
+    lost = st["energy_lost_wh"] - before["lost"]
     if lost > 0 and test not in EXPECTS_ENERGY_LOSS:
         raise TestFailure(f"the wallbox lost {lost:.1f} Wh of its energy counter")
     if test not in EXPECTS_FAULT and b.esp_fault():
         raise TestFailure(f"unexpected safety fault {b.esp_fault()}")
+    if st["cuts_under_load"] != before["cuts"] and test not in EXPECTS_POWER_LOSS:
+        raise TestFailure("the contactors opened while current flowed")
+    # the crash counter starts over with a power loss
+    crashes = b.esp_crashes()
+    if crashes > before["crashes"]:
+        raise TestFailure(f"the board crashed: {before['crashes']} -> {crashes} crashes on the status page")
+    events = b.esp_events()
+    if before["event"] in events:
+        events = events[:events.index(before["event"])]
+    abnormal = [e for e in events if re.search(ABNORMAL_START, e)]
+    if abnormal and test not in EXPECTS_POWER_LOSS:
+        raise TestFailure(f"unexpected restart: {abnormal}")
 
 
 def cleanup(b):
@@ -1361,7 +1397,7 @@ def cleanup(b):
 def soak(b, minutes):
     """PV following a sine curve between 1 and 8 kW (10 min period)."""
     b.sim("car on")
-    lost_before = b.sim_state()["energy_lost_wh"]
+    before = snapshot(b)
     b.mark_log()
     end = time.monotonic() + minutes * 60
     switches, last_phases = 0, None
@@ -1378,7 +1414,7 @@ def soak(b, minutes):
             raise TestFailure(f"safety fault {b.esp_fault()}")
         time.sleep(10)
     b.note(f"{switches} phase switches")
-    check_invariants(b, None, lost_before)
+    check_invariants(b, None, before)
     b.check_log()
 
 
@@ -1435,7 +1471,7 @@ def main():
             t0 = time.monotonic()
             try:
                 prepare(b)
-                lost_before = b.sim_state()["energy_lost_wh"]
+                before = snapshot(b)
             except TestFailure as err:
                 results.append((number, test.__doc__, "FAIL", time.monotonic() - t0, f"setup: {err}"))
                 print(f"    FAIL in setup: {err}")
@@ -1443,7 +1479,7 @@ def main():
             try:
                 b.mark_log()
                 test(b)
-                check_invariants(b, test, lost_before)
+                check_invariants(b, test, before)
                 result = "FIXED?" if known else "PASS"
                 detail = "passes although marked as known issue: " + known if known else ""
             except TestSkipped as err:
