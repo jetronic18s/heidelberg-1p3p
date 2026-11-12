@@ -1233,6 +1233,22 @@ def test_web_robustness(b):
         b.esp + "/config", data=b"sd=5000&wifimode=static&wifiip=999.1.1.1", method="POST"), timeout=5)
     if "err=ip" not in resp.geturl():
         raise TestFailure(f"an invalid WiFi address was accepted: {resp.geturl()}")
+    # An address field far beyond an address, padded with blanks: the board
+    # saves the fields as they come, also with DHCP, and NVS refuses 4000
+    # bytes and more (the board restarted). modbus/telnet: should the form
+    # be accepted after all, it must not switch Modbus off.
+    # A leading blank: the check accepted it, the network setup at the next
+    # start did not, and the static address was silently not used.
+    for field, value in (("wifiip", "1.2.3.4" + " " * 4010), ("wifidns2", "1.2.3.4" + " " * 4010),
+                         ("wifiip", " 192.168.178.50")):
+        try:
+            resp = urllib.request.urlopen(urllib.request.Request(
+                b.esp + "/config", data=f"modbus=1&telnet=1&{field}={value}".encode(),
+                method="POST"), timeout=10)
+        except OSError as err:
+            raise TestFailure(f"{field} with {len(value)} characters was not answered: {err}")
+        if "err=ip" not in resp.geturl():
+            raise TestFailure(f"{field}={value[:20]!r} ({len(value)} characters) was accepted: {resp.geturl()}")
     sd_after = re.search(r'name="sd" value="(\d+)"', urllib.request.urlopen(b.esp + "/config", timeout=5).read().decode())
     if not sd_before or not sd_after or sd_before[1] != sd_after[1]:
         raise TestFailure(f"switch delay changed: {sd_before and sd_before[1]} -> {sd_after and sd_after[1]}")
