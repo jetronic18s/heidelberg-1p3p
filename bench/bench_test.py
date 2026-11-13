@@ -815,7 +815,13 @@ def test_disable_after_switch(b):
             raise TestFailure("the current went up after evcc disabled charging")
     finally:
         b.evcc_post("phases/0")
-    b.check_log()
+    # evcc 0.319 keeps its status C for 60 s after a switch (ignored charge
+    # interruption). When that 60 s ends inside a cycle, the status check
+    # still ignores the B the wallbox reports while syncCharger() already
+    # counts the switch as done and sees "disabled but status C". Only evcc
+    # state: the wallbox reports B and 0 A, the check above covers the
+    # current.
+    b.check_log(allowed=[r"charger logic error: disabled but charging"])
 
 
 def test_dead_wallbox(b):

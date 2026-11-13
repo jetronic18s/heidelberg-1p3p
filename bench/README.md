@@ -262,7 +262,7 @@ known problem.
 | 22 | Dead wallbox | silent wallbox after power-on: safety fault `0xE104` (also in the event log), evcc reports it as `invalid status: 11`; recovery after a reboot |
 | 23 | Power loss while charging | board and simulated wallbox off for 15 s while charging on 3p: the status page reports a power-on restart, evcc charges again (`exception '11'` until the wallbox answers, `phases mismatch` once because the board boots on 1p); the event log starts over with `start: power-on`, the contactor cycle counters are kept |
 | 24 | Power loss without car | the same without a car: no phantom car connect in evcc |
-| 25 | Disable after a switch | evcc switches to 1p and disables charging right after it: the current stays at 0 A |
+| 25 | Disable after a switch | evcc switches to 1p and disables charging right after it: the current stays at 0 A; evcc 0.319 may warn `disabled but charging` once when the 60 s after its switch end inside a cycle (evcc state only, the wallbox reports B and 0 A) |
 | 26 | Busy Modbus TCP | 5 minutes of fast requests to the bridge while charging: no false evcc timeout or wallbox outage, the current never drops to 0 A |
 | 27 | Parallel requests | evcc (register 4) and the web page request the other phases at the same moment: exactly one switch; then a phase request and a reboot at the same moment: the board restarts and comes back on the requested phases |
 | 28 | Write Multiple Registers | register 4 written with Write Multiple Registers instead of Write Single Register: an invalid value returns exception 3, a range across register 4 exception 2, a valid value switches the phases |
