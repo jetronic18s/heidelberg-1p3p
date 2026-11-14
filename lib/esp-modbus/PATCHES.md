@@ -4,6 +4,8 @@ This is the registry package `espressif/esp-modbus` 2.1.4 (component code
 only: no examples, tests or tools) with two patches, marked
 `heidelberg-1p3p patch` in the code. Drop the copy once upstream fixes it.
 
+Reported upstream: https://github.com/espressif/esp-modbus/issues/205
+
 ## Problem
 
 A wallbox answer that arrives just around the master's respond timeout
